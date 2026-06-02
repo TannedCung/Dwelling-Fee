@@ -1,5 +1,5 @@
-import { and, eq, isNull, or, ilike } from "drizzle-orm";
-import { getDb } from "../db/client";
+import { and, isNull, or, ilike } from "drizzle-orm";
+import { getDb, type DbExecutor } from "../db/client";
 import { property } from "../db/schema";
 import type { PropertyExtraction } from "./extraction/schema";
 import { normalizeName, tokens, jaccard } from "./text";
@@ -28,7 +28,7 @@ export type Resolution =
   | { action: "create"; candidates: Candidate[] };
 
 /** Combined match score: name similarity dominates, type + area band refine it. */
-function score(extraction: PropertyExtraction, cand: { name: string | null; type: string; attributes: unknown }): number {
+export function score(extraction: PropertyExtraction, cand: { name: string | null; type: string; attributes: unknown }): number {
   const exTokens = tokens(normalizeName(extraction.name ?? ""));
   const candTokens = tokens(normalizeName(cand.name ?? ""));
   const nameSim = jaccard(exTokens, candTokens);
@@ -45,11 +45,10 @@ function score(extraction: PropertyExtraction, cand: { name: string | null; type
 }
 
 /** Find candidate canonical properties for an extraction, ranked by score. */
-export async function findCandidates(extraction: PropertyExtraction): Promise<Candidate[]> {
+export async function findCandidates(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<Candidate[]> {
   const blockingTokens = tokens(normalizeName(extraction.name ?? extraction.locationText ?? ""));
   if (blockingTokens.length === 0) return [];
 
-  const db = getDb();
   // Block on shared tokens (substring of the normalized name) to avoid scanning everything.
   const rows = await db
     .select({
@@ -82,8 +81,8 @@ export async function findCandidates(extraction: PropertyExtraction): Promise<Ca
 }
 
 /** Decide how to attach an extraction: auto-link, queue for review, or create new. */
-export async function resolve(extraction: PropertyExtraction): Promise<Resolution> {
-  const candidates = await findCandidates(extraction);
+export async function resolve(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<Resolution> {
+  const candidates = await findCandidates(extraction, db);
   const best = candidates[0];
   if (best && best.score >= AUTO_LINK) return { action: "link", propertyId: best.id, candidates };
   if (best && best.score >= REVIEW_MIN) return { action: "review", candidates };
@@ -91,8 +90,7 @@ export async function resolve(extraction: PropertyExtraction): Promise<Resolutio
 }
 
 /** Create a canonical property from an extraction. Returns the new id. */
-export async function createPropertyFromExtraction(extraction: PropertyExtraction): Promise<string> {
-  const db = getDb();
+export async function createPropertyFromExtraction(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<string> {
   const name = extraction.name?.trim() || null;
   const [row] = await db
     .insert(property)

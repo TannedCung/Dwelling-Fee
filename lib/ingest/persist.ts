@@ -1,4 +1,4 @@
-import { getDb } from "../../db/client";
+import { getDb, type DbExecutor } from "../../db/client";
 import { priceObservation } from "../../db/schema";
 import { resolve, createPropertyFromExtraction } from "../resolution";
 import type { PropertyExtraction } from "../extraction/schema";
@@ -29,8 +29,11 @@ export interface PersistResult {
  * Each property is auto-linked to an existing property, used to create a new one,
  * or — if low-confidence or an ambiguous match — quarantined to the review queue.
  */
-export async function persistDraft(properties: PropertyExtraction[], ctx: PersistContext): Promise<PersistResult> {
-  const db = getDb();
+export async function persistDraft(
+  properties: PropertyExtraction[],
+  ctx: PersistContext,
+  db: DbExecutor = getDb(),
+): Promise<PersistResult> {
   let autoLinked = 0, created = 0, needsReview = 0;
   const rows = [];
 
@@ -39,9 +42,9 @@ export async function persistDraft(properties: PropertyExtraction[], ctx: Persis
     let review = p.confidence < REVIEW_CONFIDENCE_THRESHOLD;
 
     if (!review) {
-      const decision = await resolve(p);
+      const decision = await resolve(p, db);
       if (decision.action === "link") { propertyId = decision.propertyId; autoLinked++; }
-      else if (decision.action === "create") { propertyId = await createPropertyFromExtraction(p); created++; }
+      else if (decision.action === "create") { propertyId = await createPropertyFromExtraction(p, db); created++; }
       else review = true; // ambiguous match → queue for human resolution
     }
     if (review) needsReview++;
