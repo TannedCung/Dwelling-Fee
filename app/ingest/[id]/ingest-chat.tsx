@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import type { PropertyExtraction } from "../../../lib/extraction/schema";
 import { missingFields, draftReady } from "../../../lib/extraction/completeness";
 import { Icon } from "../../_components/icon";
+import { useToast } from "../../_components/toast";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -68,7 +69,7 @@ export function IngestChat({
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState(status === "committed");
   const [summary, setSummary] = useState<CommitSummary | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { notify } = useToast();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(
@@ -82,7 +83,6 @@ export function IngestChat({
   async function send() {
     const content = input.trim();
     if (!content || sending) return;
-    setErr(null);
     setInput("");
     setMessages((m) => [...m, { role: "user", content }]);
     setSending(true);
@@ -120,7 +120,7 @@ export function IngestChat({
         setStreamingReply(null);
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "failed");
+      notify({ type: "error", message: e instanceof Error ? e.message : "Message failed to send." });
       setStreamingReply(null);
     } finally {
       setSending(false);
@@ -129,7 +129,6 @@ export function IngestChat({
 
   async function commit() {
     if (committing || draft.length === 0) return;
-    setErr(null);
     setCommitting(true);
     try {
       const res = await fetch(`/api/ingest/session/${sessionId}/commit`, { method: "POST" });
@@ -137,11 +136,12 @@ export function IngestChat({
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "commit failed");
       setSummary(data);
       setCommitted(true);
+      notify({ type: "success", message: `Committed — ${data.observationsCreated} observation(s) saved.` });
       // Don't router.refresh() here: it would remount this component and wipe the
       // just-computed summary. The session is now read-only and the panel below is
       // self-sufficient; the sessions list re-fetches when the user navigates back.
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "failed");
+      notify({ type: "error", message: e instanceof Error ? e.message : "Commit failed." });
     } finally {
       setCommitting(false);
     }
@@ -183,7 +183,6 @@ export function IngestChat({
             </button>
           </div>
         )}
-        {err && <p className="form-msg err">{err}</p>}
       </section>
 
       {/* Draft panel */}

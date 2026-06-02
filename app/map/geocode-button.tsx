@@ -3,16 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "../_components/icon";
+import { useToast } from "../_components/toast";
 
 export function GeocodeButton() {
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null); // live progress (stays inline)
+  const { notify } = useToast();
   const router = useRouter();
 
   async function run() {
     setBusy(true);
     setMsg(null);
     let remaining = 1;
+    let placed = 0;
     let guard = 0;
     try {
       while (remaining > 0 && guard < 12) {
@@ -20,13 +23,16 @@ export function GeocodeButton() {
         const d = await res.json();
         if (!res.ok) throw new Error(typeof d.error === "string" ? d.error : "failed");
         remaining = d.remaining;
+        placed += d.geocoded;
         setMsg(`${d.geocoded} placed · ${remaining} pending`);
         guard++;
         if (d.geocoded === 0) break; // no progress (done, or all failing) — stop
       }
       router.refresh();
+      notify({ type: "success", message: `Geocoded ${placed} propert${placed === 1 ? "y" : "ies"} · ${remaining} still pending.` });
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "failed");
+      setMsg(null);
+      notify({ type: "error", message: e instanceof Error ? e.message : "Geocoding failed." });
     } finally {
       setBusy(false);
     }

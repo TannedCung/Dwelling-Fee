@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { commitSession } from "../../../../../../lib/ingest";
+import { route } from "../../../../../../lib/api/respond";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  try {
+export const POST = route<{ params: Promise<{ id: string }> }>(
+  "ingest.session.commit",
+  async (_req, ctx, log) => {
+    const { id } = await ctx.params;
     const result = await commitSession(id);
+    log.info("session committed", { sessionId: id, observationsCreated: result.observationsCreated });
     return NextResponse.json(result);
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "commit failed" }, { status: 500 });
-  }
-}
+  },
+);

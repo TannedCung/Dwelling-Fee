@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSource, listSources, setEnabled } from "../../../../lib/collection";
+import { route, parseBody } from "../../../../lib/api/respond";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,36 +14,20 @@ const CreateBody = z.object({
 
 const PatchBody = z.object({ id: z.string().uuid(), enabled: z.boolean() });
 
-export async function GET() {
-  try {
-    return NextResponse.json({ sources: await listSources() });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
-  }
-}
+export const GET = route("collect.sources.list", async () => {
+  return NextResponse.json({ sources: await listSources() });
+});
 
-export async function POST(req: Request) {
-  const parsed = CreateBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
-  try {
-    const id = await createSource(parsed.data);
-    return NextResponse.json({ id }, { status: 201 });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
-  }
-}
+export const POST = route("collect.sources.create", async (req, _ctx, log) => {
+  const body = await parseBody(req, CreateBody);
+  const id = await createSource(body);
+  log.info("collection source created", { sourceId: id, kind: body.kind ?? "stub" });
+  return NextResponse.json({ id }, { status: 201 });
+});
 
-export async function PATCH(req: Request) {
-  const parsed = PatchBody.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
-  try {
-    await setEnabled(parsed.data.id, parsed.data.enabled);
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
-  }
-}
+export const PATCH = route("collect.sources.update", async (req, _ctx, log) => {
+  const body = await parseBody(req, PatchBody);
+  await setEnabled(body.id, body.enabled);
+  log.info("collection source toggled", { sourceId: body.id, enabled: body.enabled });
+  return NextResponse.json({ ok: true });
+});

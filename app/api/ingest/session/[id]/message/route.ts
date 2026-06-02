@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
 import { streamTurn } from "../../../../../../lib/ingest";
+import { route, parseBody } from "../../../../../../lib/api/respond";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,40 +14,42 @@ const Body = z.object({ content: z.string().min(1, "content is required") });
  *   - {type:"partial", reply, draft}  — the reply filling in as the model writes
  *   - {type:"done", result}           — persisted draft + deterministic readiness
  *   - {type:"error", error}           — model/persistence failure mid-stream
- * Pre-stream failures (bad body, closed session) still return plain JSON errors.
+ * Pre-stream failures (bad body) return a plain JSON error via the route() wrapper.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  const parsed = Body.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
+export const POST = route<{ params: Promise<{ id: string }> }>(
+  "ingest.session.message",
+  async (req, ctx, log) => {
+    const { id } = await ctx.params;
+    const { content } = await parseBody(req, Body); // throws 400 on bad body (pre-stream)
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (event: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      try {
-        for await (const event of streamTurn(id, parsed.data.content)) {
-          send(event);
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: unknown) =>
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        try {
+          for await (const event of streamTurn(id, content)) {
+            if (event.type === "error") log.error("turn failed mid-stream", undefined, { sessionId: id, detail: event.error });
+            send(event);
+          }
+        } catch (e) {
+          // Thrown around the generator (e.g. session not found/closed).
+          log.error("turn failed", e, { sessionId: id });
+          send({ type: "error", error: e instanceof Error ? e.message : "turn failed" });
+        } finally {
+          controller.close();
         }
-      } catch (e) {
-        // Thrown before/around the generator (e.g. session not found/closed).
-        send({ type: "error", error: e instanceof Error ? e.message : "turn failed" });
-      } finally {
-        controller.close();
-      }
-    },
-  });
+      },
+    });
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      // Disable proxy buffering so events flush immediately.
-      "x-accel-buffering": "no",
-    },
-  });
-}
+    return new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        // Disable proxy buffering so events flush immediately.
+        "x-accel-buffering": "no",
+      },
+    });
+  },
+);

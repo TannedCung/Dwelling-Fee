@@ -1,6 +1,8 @@
 import { listReviewQueue, type ReviewItem } from "../../lib/review";
 import { ReviewActions } from "./review-actions";
 import { Icon } from "../_components/icon";
+import { DatabaseError } from "../_components/notice";
+import { describeError } from "../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +27,7 @@ export default async function ReviewPage() {
   try {
     items = await listReviewQueue();
   } catch (e) {
-    error = e instanceof Error ? e.message : "database unavailable";
+    error = describeError(e, "review");
   }
 
   return (

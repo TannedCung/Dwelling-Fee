@@ -1,17 +1,23 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Candidate } from "../../lib/resolution";
 import { Icon } from "../_components/icon";
+import { useToast } from "../_components/toast";
+
+const DONE_MESSAGE: Record<string, string> = {
+  link: "Linked to property.",
+  create: "New property created.",
+  dismiss: "Observation dismissed.",
+};
 
 export function ReviewActions({ observationId, candidates }: { observationId: string; candidates: Candidate[] }) {
   const [pending, start] = useTransition();
-  const [err, setErr] = useState<string | null>(null);
+  const { notify } = useToast();
   const router = useRouter();
 
-  function act(body: Record<string, unknown>) {
-    setErr(null);
+  function act(body: { action: "link" | "create" | "dismiss"; propertyId?: string }) {
     start(async () => {
       const res = await fetch(`/api/review/${observationId}`, {
         method: "POST",
@@ -20,9 +26,10 @@ export function ReviewActions({ observationId, candidates }: { observationId: st
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setErr(typeof d.error === "string" ? d.error : "failed");
+        notify({ type: "error", message: typeof d.error === "string" ? d.error : "Review action failed." });
         return;
       }
+      notify({ type: "success", message: DONE_MESSAGE[body.action] ?? "Done." });
       router.refresh();
     });
   }
@@ -43,7 +50,6 @@ export function ReviewActions({ observationId, candidates }: { observationId: st
         <Icon name="x" size={15} />
         Dismiss
       </button>
-      {err && <span className="form-msg err" style={{ fontSize: 13 }}>{err}</span>}
     </div>
   );
 }
