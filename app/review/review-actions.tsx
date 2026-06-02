@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Candidate } from "../../lib/resolution";
+import { Icon } from "../_components/icon";
 
 export function ReviewActions({ observationId, candidates }: { observationId: string; candidates: Candidate[] }) {
   const [pending, start] = useTransition();
@@ -27,20 +28,22 @@ export function ReviewActions({ observationId, candidates }: { observationId: st
   }
 
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+    <div className="actions">
       {candidates.map((c) => (
-        <button key={c.id} disabled={pending} onClick={() => act({ action: "link", propertyId: c.id })}
-          style={{ padding: "4px 10px", cursor: "pointer" }}>
-          Link → {c.name ?? "(unnamed)"} <span style={{ color: "#888" }}>{(c.score * 100).toFixed(0)}%</span>
+        <button key={c.id} disabled={pending} onClick={() => act({ action: "link", propertyId: c.id })} className="btn ghost sm">
+          <Icon name="link" size={15} />
+          {c.name ?? "(unnamed)"} <span className="mono" style={{ color: "var(--ink-3)" }}>{(c.score * 100).toFixed(0)}%</span>
         </button>
       ))}
-      <button disabled={pending} onClick={() => act({ action: "create" })} style={{ padding: "4px 10px", cursor: "pointer" }}>
-        + Create new
+      <button disabled={pending} onClick={() => act({ action: "create" })} className="btn secondary sm">
+        <Icon name="plus" size={15} />
+        Create new
       </button>
-      <button disabled={pending} onClick={() => act({ action: "dismiss" })} style={{ padding: "4px 10px", cursor: "pointer", color: "#b00" }}>
+      <button disabled={pending} onClick={() => act({ action: "dismiss" })} className="btn danger sm">
+        <Icon name="x" size={15} />
         Dismiss
       </button>
-      {err && <span style={{ color: "#b00", fontSize: 13 }}>{err}</span>}
+      {err && <span className="form-msg err" style={{ fontSize: 13 }}>{err}</span>}
     </div>
   );
 }

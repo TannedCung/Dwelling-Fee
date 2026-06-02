@@ -15,6 +15,13 @@
       "when": 1780394349421,
       "tag": "0001_magical_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780395686801,
+      "tag": "0002_chilly_impossible_man",
+      "breakpoints": true
     }
   ]
 }

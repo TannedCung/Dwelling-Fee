@@ -1,11 +1,23 @@
 import { listReviewQueue, type ReviewItem } from "../../lib/review";
 import { ReviewActions } from "./review-actions";
+import { Icon } from "../_components/icon";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const vnd = (n: number | null) =>
   n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n) + " ₫";
+
+function ConfidenceBadge({ value }: { value: number }) {
+  const cls = value >= 0.75 ? "committed" : value >= 0.5 ? "review" : "failed";
+  const dot = value >= 0.75 ? "var(--success)" : value >= 0.5 ? "var(--warning)" : "var(--danger)";
+  return (
+    <span className={`badge ${cls}`}>
+      <span className="dot" style={{ background: dot }} />
+      conf {(value * 100).toFixed(0)}%
+    </span>
+  );
+}
 
 export default async function ReviewPage() {
   let items: ReviewItem[] = [];
@@ -17,36 +29,40 @@ export default async function ReviewPage() {
   }
 
   return (
-    <main style={{ display: "grid", gap: 16 }}>
-      <header>
-        <h1 style={{ marginBottom: 4 }}>Review queue</h1>
-        <p style={{ color: "#666", margin: 0 }}>
+    <main>
+      <header className="page-head">
+        <div className="eyebrow">Review queue</div>
+        <h1>Review queue</h1>
+        <p>
           Observations with low extraction confidence or an ambiguous property match. Link to a
           candidate, create a new property, or dismiss. Until resolved, these are excluded from analytics.
         </p>
       </header>
 
       {error ? (
-        <p style={{ color: "#b00" }}>Database not reachable ({error}).</p>
+        <div className="notice danger">Database not reachable ({error}).</div>
       ) : items.length === 0 ? (
-        <p style={{ color: "#888" }}>Nothing to review. 🎉</p>
+        <div className="empty">
+          <Icon name="check-circle" size={30} />
+          Nothing to review — the queue is clear.
+        </div>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 14 }}>
+        <div className="stack" style={{ gap: 14 }}>
           {items.map((it) => (
-            <li key={it.observationId} style={{ border: "1px solid #eee", borderRadius: 8, padding: 14, display: "grid", gap: 10 }}>
-              <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 14 }}>{it.rawText}</p>
-              <div style={{ fontSize: 13, color: "#444" }}>
-                <strong>{it.extraction.name ?? "(no name)"}</strong> · {it.extraction.type} ·{" "}
-                {it.extraction.listingType} · {vnd(it.priceVnd)}
-                {it.extraction.areaM2 != null && ` · ${it.extraction.areaM2} m²`}
-                {it.confidence != null && (
-                  <span style={{ color: "#888" }}> · conf {(it.confidence * 100).toFixed(0)}%</span>
-                )}
+            <div key={it.observationId} className="card review-item">
+              <p className="raw">{it.rawText}</p>
+              <div className="review-extract">
+                <strong>{it.extraction.name ?? "(no name)"}</strong>
+                <span className="chip">{it.extraction.type}</span>
+                <span className="chip">{it.extraction.listingType}</span>
+                <span className="mono">{vnd(it.priceVnd)}</span>
+                {it.extraction.areaM2 != null && <span className="mono">{it.extraction.areaM2} m²</span>}
+                {it.confidence != null && <ConfidenceBadge value={it.confidence} />}
               </div>
               <ReviewActions observationId={it.observationId} candidates={it.candidates} />
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </main>
   );

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { PropertyExtraction } from "../../../lib/extraction/schema";
 import { missingFields, draftReady } from "../../../lib/extraction/completeness";
+import { Icon } from "../../_components/icon";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -90,33 +91,23 @@ export function IngestChat({
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,360px)", gap: 20, alignItems: "start" }}>
+    <div className="chat-grid">
       {/* Conversation */}
-      <section style={{ display: "grid", gap: 12, minWidth: 0 }}>
-        <div style={{ display: "grid", gap: 10, maxHeight: 460, overflowY: "auto", padding: 4 }}>
+      <section className="stack" style={{ minWidth: 0 }}>
+        <div className="chat-log">
           {messages.map((m, i) => (
-            <div key={i} style={{ justifySelf: m.role === "user" ? "end" : "start", maxWidth: "85%" }}>
-              <div
-                style={{
-                  background: m.role === "user" ? "#2563eb" : "#f1f3f5",
-                  color: m.role === "user" ? "#fff" : "#111",
-                  padding: "8px 12px",
-                  borderRadius: 12,
-                  whiteSpace: "pre-wrap",
-                  fontSize: 14,
-                }}
-              >
-                {m.content}
-              </div>
+            <div key={i} className={`bubble ${m.role}`}>
+              {m.content}
             </div>
           ))}
-          {sending && <div style={{ color: "#888", fontSize: 13 }}>Assistant is thinking…</div>}
+          {sending && <div className="muted">Assistant is thinking…</div>}
           <div ref={endRef} />
         </div>
 
         {!committed && (
-          <div style={{ display: "grid", gap: 8 }}>
+          <div className="stack" style={{ gap: 10 }}>
             <textarea
+              className="input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -124,84 +115,80 @@ export function IngestChat({
               }}
               placeholder="Paste a broker message, or refine the draft… (⌘/Ctrl+Enter to send)"
               rows={3}
-              style={{ width: "100%", padding: 10, fontFamily: "inherit", fontSize: 14 }}
             />
-            <button onClick={send} disabled={sending || input.trim().length === 0} style={{ padding: "8px 16px", cursor: "pointer", justifySelf: "start" }}>
+            <button onClick={send} disabled={sending || input.trim().length === 0} className="btn primary" style={{ justifySelf: "start" }}>
+              <Icon name="send" size={16} />
               {sending ? "Sending…" : "Send"}
             </button>
           </div>
         )}
-        {err && <p style={{ color: "#b00", fontSize: 13 }}>{err}</p>}
+        {err && <p className="form-msg err">{err}</p>}
       </section>
 
       {/* Draft panel */}
-      <aside style={{ border: "1px solid #eee", borderRadius: 10, padding: 14, display: "grid", gap: 10, position: "sticky", top: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <strong style={{ fontSize: 14 }}>Draft</strong>
-          <span style={{ fontSize: 12, color: "#888" }}>{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
+      <aside className="card draft-panel">
+        <div className="card-row" style={{ alignItems: "baseline" }}>
+          <strong className="card-title" style={{ fontSize: 15 }}>Draft</strong>
+          <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
         </div>
 
         {draft.length === 0 ? (
-          <p style={{ color: "#999", fontSize: 13, margin: 0 }}>Nothing yet. Paste a message to start.</p>
+          <p className="muted" style={{ margin: 0 }}>Nothing yet. Paste a message to start.</p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+          <div className="stack" style={{ gap: 8 }}>
             {draft.map((p, i) => (
-              <li key={i} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10, fontSize: 13 }}>
-                <div style={{ fontWeight: 600 }}>{p.name ?? "(unnamed)"}</div>
-                <div style={{ color: "#555" }}>
+              <div key={i} className="draft-item">
+                <div className="dt">{p.name ?? "(unnamed)"}</div>
+                <div className="dmeta">
                   {p.type} · {p.listingType} · {vnd(p.priceVnd)}
                   {p.priceBasis === "per_m2" && "/m²"}
                   {p.areaM2 != null && ` · ${p.areaM2} m²`}
                   {p.bedrooms != null && ` · ${p.bedrooms}BR`}
                   {p.isNegotiable && " · TL"}
                 </div>
-                <div style={{ color: "#aaa", fontSize: 11 }}>
+                <div className="dsub">
                   {p.dealStatus} · conf {(p.confidence * 100).toFixed(0)}%
                   {p.locationText && ` · ${p.locationText}`}
                 </div>
                 {missingFields(p).length > 0 ? (
-                  <div style={{ color: "#c0392b", fontSize: 11, marginTop: 4 }}>
-                    ⚠ needs: {missingFields(p).join(", ")}
+                  <div className="draft-flag needs">
+                    <Icon name="triangle-alert" size={13} /> needs: {missingFields(p).join(", ")}
                   </div>
                 ) : (
-                  <div style={{ color: "#137333", fontSize: 11, marginTop: 4 }}>✓ complete</div>
+                  <div className="draft-flag ok">
+                    <Icon name="check-circle" size={13} /> complete
+                  </div>
                 )}
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
 
         {committed ? (
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ color: "#137333", fontSize: 13, fontWeight: 600 }}>✓ Committed</div>
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="form-msg ok" style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="check-circle" size={16} /> Committed
+            </div>
             {summary && (
-              <div style={{ fontSize: 12, color: "#555" }}>
+              <div className="muted">
                 {summary.observationsCreated} obs · {summary.autoLinked} linked · {summary.created} new · {summary.needsReview} to review
               </div>
             )}
-            <a href="/properties" style={{ fontSize: 13 }}>View properties →</a>
-            <a href="/" style={{ fontSize: 13 }}>Back to sessions</a>
+            <a href="/properties" className="form-msg">View properties →</a>
+            <a href="/" className="form-msg">Back to sessions</a>
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 6 }}>
+          <div className="stack" style={{ gap: 6 }}>
             <button
               onClick={commit}
               disabled={committing || !ready}
               title={ready ? "" : "Fill in the required fields first"}
-              style={{
-                padding: "8px 16px",
-                cursor: ready ? "pointer" : "not-allowed",
-                background: ready ? "#137333" : "#e9ecef",
-                color: ready ? "#fff" : "#888",
-                border: "none",
-                borderRadius: 6,
-                fontWeight: 600,
-              }}
+              className="btn secondary"
             >
               {committing ? "Committing…" : "Commit draft"}
             </button>
             {!ready && draft.length > 0 && (
-              <span style={{ fontSize: 11, color: "#c0392b" }}>
+              <span className="form-msg err" style={{ fontSize: 12 }}>
                 {incompleteCount} propert{incompleteCount === 1 ? "y" : "ies"} still missing required info.
               </span>
             )}

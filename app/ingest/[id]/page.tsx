@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSession } from "../../../lib/ingest";
 import { IngestChat } from "./ingest-chat";
+import { Icon } from "../../_components/icon";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,18 +13,19 @@ export default async function IngestSessionPage({ params }: { params: Promise<{ 
   try {
     session = await getSession(id);
   } catch (e) {
-    return <p style={{ color: "#b00" }}>Database not reachable ({e instanceof Error ? e.message : "error"}).</p>;
+    return <div className="notice danger">Database not reachable ({e instanceof Error ? e.message : "error"}).</div>;
   }
   if (!session) notFound();
 
   return (
-    <main style={{ display: "grid", gap: 16 }}>
-      <p style={{ margin: 0 }}>
-        <Link href="/">← Sessions</Link>
-      </p>
-      <header>
-        <h1 style={{ marginBottom: 4, fontSize: 22 }}>{session.title ?? "New ingest session"}</h1>
-        <p style={{ color: "#666", margin: 0 }}>
+    <main>
+      <Link href="/" className="back-link" style={{ marginBottom: 16 }}>
+        <Icon name="arrow-left" size={15} /> Sessions
+      </Link>
+      <header className="page-head">
+        <div className="eyebrow">Ingest session</div>
+        <h1>{session.title ?? "New ingest session"}</h1>
+        <p>
           {session.sourceType} · {session.status}
           {session.status !== "open" && " — this session is closed (read-only)."}
         </p>

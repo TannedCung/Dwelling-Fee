@@ -1,16 +1,14 @@
-import type { CSSProperties } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProperty } from "../../../lib/properties";
 import { PriceScatter } from "../../_components/price-scatter";
 import { MIN_SAMPLE } from "../../../lib/stats";
+import { Icon } from "../../_components/icon";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const m = (n: number | null) => (n == null ? "—" : `${(n / 1_000_000).toFixed(1)}M`);
-const cell: CSSProperties = { padding: "6px 10px", borderBottom: "1px solid #eee", textAlign: "right", whiteSpace: "nowrap" };
-const cellL: CSSProperties = { ...cell, textAlign: "left" };
 
 export default async function PropertyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -18,78 +16,96 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
   try {
     detail = await getProperty(id);
   } catch (e) {
-    return <p style={{ color: "#b00" }}>Database not reachable ({e instanceof Error ? e.message : "error"}).</p>;
+    return <div className="notice danger">Database not reachable ({e instanceof Error ? e.message : "error"}).</div>;
   }
   if (!detail) notFound();
 
   const d = detail.saleDistribution;
+  const reliable = d.n >= MIN_SAMPLE;
 
   return (
-    <main style={{ display: "grid", gap: 16 }}>
-      <p style={{ margin: 0 }}>
-        <Link href="/properties">← Properties</Link>
-      </p>
-      <header>
-        <h1 style={{ marginBottom: 4 }}>{detail.name ?? "(unnamed property)"}</h1>
-        <p style={{ color: "#666", margin: 0 }}>
+    <main>
+      <Link href="/properties" className="back-link" style={{ marginBottom: 16 }}>
+        <Icon name="arrow-left" size={15} /> Properties
+      </Link>
+      <header className="page-head">
+        <div className="eyebrow">Living page</div>
+        <h1>{detail.name ?? "(unnamed property)"}</h1>
+        <p>
           {detail.type}
           {detail.addressText && ` · ${detail.addressText}`} · {detail.observations.length} observations
         </p>
       </header>
 
-      <section style={{ display: "grid", gap: 6 }}>
-        <h2 style={{ fontSize: 16, margin: 0 }}>Sale price/m² distribution</h2>
-        {d.n < MIN_SAMPLE ? (
-          <p style={{ color: "#a60", fontSize: 13 }}>
-            Only {d.n} sale observation(s) — too few for a reliable estimate (need ≥ {MIN_SAMPLE}).
-          </p>
+      <section className="section" style={{ marginTop: 0 }}>
+        <h2>Sale price/m² distribution</h2>
+        {!reliable ? (
+          <div className="notice">
+            <Icon name="triangle-alert" size={17} />
+            <span>
+              Only {d.n} sale observation(s) — too few for a reliable estimate (need ≥ {MIN_SAMPLE}).
+            </span>
+          </div>
         ) : (
-          <p style={{ fontSize: 14 }}>
-            median <strong>{m(d.median)}</strong> · IQR {m(d.p25)}–{m(d.p75)} · n={d.n}
-          </p>
+          <div className="stat-row">
+            <div className="stat">
+              <span className="num">{m(d.median)}</span>
+              <span className="lbl">median /m²</span>
+            </div>
+            <div className="stat">
+              <span className="num">{m(d.p25)}–{m(d.p75)}</span>
+              <span className="lbl">IQR p25–p75</span>
+            </div>
+            <div className="stat">
+              <span className="num">n={d.n}</span>
+              <span className="lbl">sample size</span>
+            </div>
+          </div>
         )}
       </section>
 
-      <PriceScatter
-        points={detail.observations.map((o) => ({
-          t: o.t,
-          pricePerM2: o.pricePerM2,
-          sourceType: o.sourceType,
-          dealStatus: o.dealStatus,
-        }))}
-        band={{ median: d.median, p25: d.p25, p75: d.p75 }}
-      />
+      <div className="section" style={{ marginTop: 18 }}>
+        <PriceScatter
+          points={detail.observations.map((o) => ({
+            t: o.t,
+            pricePerM2: o.pricePerM2,
+            sourceType: o.sourceType,
+            dealStatus: o.dealStatus,
+          }))}
+          band={{ median: d.median, p25: d.p25, p75: d.p75 }}
+        />
+      </div>
 
-      <section style={{ display: "grid", gap: 6 }}>
-        <h2 style={{ fontSize: 16, margin: 0 }}>Observations</h2>
+      <section className="section">
+        <h2>Observations</h2>
         {detail.observations.length === 0 ? (
-          <p style={{ color: "#888" }}>No observations linked to this property.</p>
+          <div className="empty">No observations linked to this property.</div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+          <div className="table-wrap">
+            <table className="data" style={{ minWidth: 560 }}>
               <thead>
                 <tr>
-                  <th style={cellL}>Date</th>
-                  <th style={cellL}>Listing</th>
-                  <th style={cellL}>Deal</th>
-                  <th style={cell}>Price</th>
-                  <th style={cell}>Area</th>
-                  <th style={cell}>Price/m²</th>
-                  <th style={cellL}>Source</th>
-                  <th style={cell}>Conf.</th>
+                  <th className="l">Date</th>
+                  <th className="l">Listing</th>
+                  <th className="l">Deal</th>
+                  <th>Price</th>
+                  <th>Area</th>
+                  <th>Price/m²</th>
+                  <th className="l">Source</th>
+                  <th>Conf.</th>
                 </tr>
               </thead>
               <tbody>
                 {detail.observations.map((o) => (
                   <tr key={o.id}>
-                    <td style={cellL}>{new Date(o.t).toLocaleDateString()}</td>
-                    <td style={cellL}>{o.listingType}</td>
-                    <td style={cellL}>{o.dealStatus}</td>
-                    <td style={cell}>{o.priceVnd == null ? "—" : m(o.priceVnd)}</td>
-                    <td style={cell}>{o.areaM2 == null ? "—" : `${o.areaM2} m²`}</td>
-                    <td style={cell}>{m(o.pricePerM2)}</td>
-                    <td style={cellL}>{o.sourceType}</td>
-                    <td style={cell}>{o.confidence == null ? "—" : `${(o.confidence * 100).toFixed(0)}%`}</td>
+                    <td className="l seg">{new Date(o.t).toLocaleDateString()}</td>
+                    <td className="l seg">{o.listingType}</td>
+                    <td className="l seg">{o.dealStatus}</td>
+                    <td>{o.priceVnd == null ? "—" : m(o.priceVnd)}</td>
+                    <td>{o.areaM2 == null ? "—" : `${o.areaM2} m²`}</td>
+                    <td>{m(o.pricePerM2)}</td>
+                    <td className="l seg">{o.sourceType}</td>
+                    <td>{o.confidence == null ? "—" : `${(o.confidence * 100).toFixed(0)}%`}</td>
                   </tr>
                 ))}
               </tbody>

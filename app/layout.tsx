@@ -1,29 +1,39 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
+import "./globals.css";
+import { Nav } from "./_components/nav";
+import { listReviewQueue } from "../lib/review";
 
 export const metadata = {
   title: "Dwelling Fee — Housing Price Intelligence",
   description: "Collect, structure, and analyze fragmented housing price signals.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  let reviewCount = 0;
+  try {
+    reviewCount = (await listReviewQueue()).length;
+  } catch {
+    // database may be unavailable — the badge just stays hidden
+  }
+
   return (
     <html lang="en">
-      <body
-        style={{
-          fontFamily: "system-ui, sans-serif",
-          maxWidth: 880,
-          margin: "0 auto",
-          padding: "2rem 1.25rem",
-          lineHeight: 1.5,
-        }}
-      >
-        <nav style={{ display: "flex", gap: 16, marginBottom: 24, paddingBottom: 12, borderBottom: "1px solid #eee" }}>
-          <a href="/">Ingest</a>
-          <a href="/review">Review</a>
-          <a href="/properties">Properties</a>
-          <a href="/analytics">Analytics</a>
-        </nav>
-        {children}
+      <body>
+        <div className="app">
+          <header className="topbar">
+            <Link href="/" className="brand">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-mark.svg" alt="" width={34} height={34} />
+              <span className="wm">Dwelling Fee</span>
+            </Link>
+            <Nav reviewCount={reviewCount} />
+          </header>
+          {children}
+        </div>
       </body>
     </html>
   );

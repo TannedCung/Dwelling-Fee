@@ -154,6 +154,19 @@ export const extractionJob = pgTable("extraction_job", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
+// ── geocode_cache — memoized geocoding results (incl. negative results) ─────
+// Vietnamese addresses are hard and providers are rate-limited; cache every
+// lookup (a null lat/lng means "looked up, not found") so we never re-query.
+export const geocodeCache = pgTable("geocode_cache", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  query: text("query").notNull().unique(),
+  lat: numeric("lat"),
+  lng: numeric("lng"),
+  displayName: text("display_name"),
+  provider: text("provider"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ── ingest_session — conversational drafting workspace ──────────────────────
 // A session holds an evolving DRAFT (PropertyExtraction[]) built through chat,
 // and is the provenance anchor for the observations committed from it.

@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Icon } from "./icon";
 
 export function NewSessionButton() {
   const [pending, start] = useTransition();
@@ -16,8 +17,9 @@ export function NewSessionButton() {
   }
 
   return (
-    <button onClick={create} disabled={pending} style={{ padding: "10px 18px", cursor: "pointer", fontWeight: 600, justifySelf: "start" }}>
-      {pending ? "Starting…" : "+ New ingest session"}
+    <button onClick={create} disabled={pending} className="btn primary">
+      <Icon name="plus" size={16} />
+      {pending ? "Starting…" : "New ingest session"}
     </button>
   );
 }

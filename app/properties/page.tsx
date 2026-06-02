@@ -14,30 +14,32 @@ export default async function PropertiesPage() {
   }
 
   return (
-    <main style={{ display: "grid", gap: 16 }}>
-      <header>
-        <h1 style={{ marginBottom: 4 }}>Properties</h1>
-        <p style={{ color: "#666", margin: 0 }}>Resolved property entities, most-observed first.</p>
+    <main>
+      <header className="page-head">
+        <div className="eyebrow">Properties</div>
+        <h1>Properties</h1>
+        <p>Resolved property entities — living pages that aggregate observations over time, most-observed first.</p>
       </header>
 
       {error ? (
-        <p style={{ color: "#b00" }}>Database not reachable ({error}).</p>
+        <div className="notice danger">Database not reachable ({error}).</div>
       ) : rows.length === 0 ? (
-        <p style={{ color: "#888" }}>No properties yet — ingest some signals.</p>
+        <div className="empty">No properties yet — ingest some signals.</div>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
+        <div className="stack">
           {rows.map((p) => (
-            <li key={p.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-              <Link href={`/properties/${p.id}`} style={{ fontWeight: 600 }}>
-                {p.name ?? "(unnamed property)"}
-              </Link>
-              <div style={{ fontSize: 13, color: "#888" }}>
-                {p.type}
-                {p.addressText && ` · ${p.addressText}`} · {p.obsCount} obs
+            <Link key={p.id} href={`/properties/${p.id}`} className="card interactive">
+              <div className="card-row">
+                <span className="card-title">{p.name ?? "(unnamed property)"}</span>
+                <span className="chip">{p.obsCount} obs</span>
               </div>
-            </li>
+              <div className="card-sub">
+                {p.type}
+                {p.addressText && ` · ${p.addressText}`}
+              </div>
+            </Link>
           ))}
-        </ul>
+        </div>
       )}
     </main>
   );
