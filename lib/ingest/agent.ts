@@ -1,9 +1,9 @@
-import { generateObject, type ModelMessage } from "ai";
+import { generateObject, streamObject, type ModelMessage } from "ai";
 import { z } from "zod";
 import { getExtractionModel } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
-import { getSession, addMessage, updateDraft } from "./session";
+import { getSession, addMessage, updateDraft, type SessionView } from "./session";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -58,12 +58,18 @@ export interface TurnResult {
   readyToCommit: boolean;
 }
 
-export async function runTurn(sessionId: string, userContent: string): Promise<TurnResult> {
+type DraftTurnObject = z.infer<typeof DraftTurn>;
+
+/**
+ * Shared turn setup: validate the session, persist the user message (so it's never
+ * lost if the model call fails), and assemble the prompt. Used by both the one-shot
+ * and streaming paths.
+ */
+async function prepareTurn(sessionId: string, userContent: string) {
   const before = await getSession(sessionId);
   if (!before) throw new Error("session not found");
   if (before.status !== "open") throw new Error("session is not open");
 
-  // Persist the user turn first so it's never lost, even if the model call fails.
   await addMessage(sessionId, "user", userContent);
 
   const transcript: ModelMessage[] = [...before.messages, { role: "user" as const, content: userContent }].map((m) => ({
@@ -76,19 +82,65 @@ export async function runTurn(sessionId: string, userContent: string): Promise<T
     `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
     (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "");
 
+  return { before, transcript, system };
+}
+
+/** Persist the model's result and apply the deterministic readiness gate. */
+async function finalizeTurn(
+  sessionId: string,
+  before: SessionView,
+  object: DraftTurnObject,
+  userContent: string,
+): Promise<TurnResult> {
+  const title = before.title ?? deriveTitle(object.properties, userContent);
+  await updateDraft(sessionId, object.properties, title);
+  await addMessage(sessionId, "assistant", object.reply);
+  // Readiness is a deterministic gate on required fields — not the model's opinion.
+  return { reply: object.reply, draft: object.properties, readyToCommit: draftReady(object.properties) };
+}
+
+export async function runTurn(sessionId: string, userContent: string): Promise<TurnResult> {
+  const { before, transcript, system } = await prepareTurn(sessionId, userContent);
   const { object } = await generateObject({
     model: getExtractionModel(),
     schema: DraftTurn,
     system,
     messages: transcript,
   });
+  return finalizeTurn(sessionId, before, object, userContent);
+}
 
-  const title = before.title ?? deriveTitle(object.properties, userContent);
-  await updateDraft(sessionId, object.properties, title);
-  await addMessage(sessionId, "assistant", object.reply);
+export type TurnEvent =
+  | { type: "partial"; reply: string; draft: unknown }
+  | { type: "done"; result: TurnResult }
+  | { type: "error"; error: string };
 
-  // Readiness is a deterministic gate on required fields — not the model's opinion.
-  return { reply: object.reply, draft: object.properties, readyToCommit: draftReady(object.properties) };
+/**
+ * Streaming variant of {@link runTurn}. Yields incremental events as the model
+ * produces them — the reply text fills in token-by-token (it's the first field in
+ * the schema) — then persists and yields a final `done` event carrying the
+ * validated draft and deterministic readiness flag.
+ */
+export async function* streamTurn(sessionId: string, userContent: string): AsyncGenerator<TurnEvent> {
+  const { before, transcript, system } = await prepareTurn(sessionId, userContent);
+
+  const stream = streamObject({
+    model: getExtractionModel(),
+    schema: DraftTurn,
+    system,
+    messages: transcript,
+  });
+
+  try {
+    for await (const partial of stream.partialObjectStream) {
+      yield { type: "partial", reply: partial.reply ?? "", draft: partial.properties ?? [] };
+    }
+    const object = await stream.object; // validated; throws on schema mismatch
+    const result = await finalizeTurn(sessionId, before, object, userContent);
+    yield { type: "done", result };
+  } catch (e) {
+    yield { type: "error", error: e instanceof Error ? e.message : "turn failed" };
+  }
 }
 
 function deriveTitle(properties: PropertyExtraction[], fallback: string): string {

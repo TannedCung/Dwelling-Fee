@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import type { PropertyExtraction } from "../../../lib/extraction/schema";
 import { missingFields, draftReady } from "../../../lib/extraction/completeness";
 import { Icon } from "../../_components/icon";
@@ -9,6 +8,35 @@ import { Icon } from "../../_components/icon";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+type TurnEvent =
+  | { type: "partial"; reply: string; draft: unknown }
+  | { type: "done"; result: { reply: string; draft: PropertyExtraction[]; readyToCommit: boolean } }
+  | { type: "error"; error: string };
+
+/** Read a `text/event-stream` body and yield each parsed `data:` JSON payload. */
+async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<TurnEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const line = block.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      try {
+        yield JSON.parse(line.slice(5).trim()) as TurnEvent;
+      } catch {
+        /* ignore malformed frame */
+      }
+    }
+  }
 }
 
 interface CommitSummary {
@@ -36,14 +64,17 @@ export function IngestChat({
   const [draft, setDraft] = useState<PropertyExtraction[]>(initialDraft);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streamingReply, setStreamingReply] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState(status === "committed");
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const router = useRouter();
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, sending]);
+  useEffect(
+    () => endRef.current?.scrollIntoView({ behavior: "smooth" }),
+    [messages, sending, streamingReply],
+  );
 
   const ready = draftReady(draft);
   const incompleteCount = draft.filter((p) => missingFields(p).length > 0).length;
@@ -55,18 +86,42 @@ export function IngestChat({
     setInput("");
     setMessages((m) => [...m, { role: "user", content }]);
     setSending(true);
+    setStreamingReply(""); // show the assistant bubble immediately, fill as it streams
     try {
       const res = await fetch(`/api/ingest/session/${sessionId}/message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "turn failed");
-      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
-      setDraft(data.draft);
+      if (!res.ok || !res.body) {
+        // Pre-stream error: server replied with JSON, not an event stream.
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.error === "string" ? data.error : "turn failed");
+      }
+
+      let lastReply = "";
+      let committedTurn = false;
+      for await (const event of readSse(res.body)) {
+        if (event.type === "partial") {
+          lastReply = event.reply;
+          setStreamingReply(event.reply);
+        } else if (event.type === "done") {
+          committedTurn = true;
+          setMessages((m) => [...m, { role: "assistant", content: event.result.reply }]);
+          setDraft(event.result.draft);
+          setStreamingReply(null);
+        } else if (event.type === "error") {
+          throw new Error(event.error);
+        }
+      }
+      // Stream ended without a `done` (e.g. dropped connection) — keep what we have.
+      if (!committedTurn) {
+        if (lastReply) setMessages((m) => [...m, { role: "assistant", content: lastReply }]);
+        setStreamingReply(null);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
+      setStreamingReply(null);
     } finally {
       setSending(false);
     }
@@ -82,7 +137,9 @@ export function IngestChat({
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "commit failed");
       setSummary(data);
       setCommitted(true);
-      router.refresh();
+      // Don't router.refresh() here: it would remount this component and wipe the
+      // just-computed summary. The session is now read-only and the panel below is
+      // self-sufficient; the sessions list re-fetches when the user navigates back.
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
     } finally {
@@ -100,7 +157,11 @@ export function IngestChat({
               {m.content}
             </div>
           ))}
-          {sending && <div className="muted">Assistant is thinking…</div>}
+          {streamingReply !== null && (
+            <div className="bubble assistant" aria-live="polite" data-testid="streaming-bubble">
+              {streamingReply || <span className="typing-dots"><span /><span /><span /></span>}
+            </div>
+          )}
           <div ref={endRef} />
         </div>
 

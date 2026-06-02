@@ -2,6 +2,7 @@ import { createProviderRegistry, type LanguageModel } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
+import { createMockModel } from "./mock";
 
 /**
  * Multi-provider LLM layer (design §8). The extractor and any future LLM step go
@@ -39,6 +40,8 @@ export function resolveExtractionModelId(): string {
 }
 
 export function getExtractionModel(): LanguageModel {
+  // Deterministic offline model for tests — no provider call, no API key.
+  if (process.env.MOCK_AI === "1") return createMockModel();
   return registry.languageModel(resolveExtractionModelId() as `${Provider}:${string}`);
 }
 
