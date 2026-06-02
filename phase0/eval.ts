@@ -1,6 +1,6 @@
-import { extract, EXTRACTOR_VERSION } from "./extract.ts";
-import { DATASET, type Case, type Golden } from "./dataset.ts";
-import type { PropertyExtraction } from "./schema.ts";
+import { extract, EXTRACTOR_VERSION } from "../lib/extraction/extract";
+import { DATASET, type Golden } from "./dataset";
+import type { PropertyExtraction } from "../lib/extraction/schema";
 
 /**
  * Phase 0 evaluation harness (docs/design.md §11).

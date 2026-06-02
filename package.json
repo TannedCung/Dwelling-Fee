@@ -5,17 +5,31 @@
   "type": "module",
   "description": "Housing Price Intelligence System",
   "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "phase0:eval": "tsx phase0/eval.ts",
-    "phase0:extract": "tsx phase0/extract.ts",
+    "phase0:extract": "tsx lib/extraction/extract.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
+    "@neondatabase/serverless": "^0.10.0",
+    "drizzle-orm": "^0.45.2",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }

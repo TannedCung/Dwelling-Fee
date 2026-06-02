@@ -8,10 +8,13 @@ building infrastructure around it.** This harness is the gate.
 
 | File | Purpose |
 |---|---|
-| `schema.ts` | Extraction target (zod + the JSON tool schema handed to Claude). Mirrors `price_observation`. |
-| `extract.ts` | Calls Claude Haiku with a forced tool to return structured output. Prompt-cached system prompt. |
+| `../lib/extraction/schema.ts` | Extraction target (zod + the JSON tool schema handed to Claude). Mirrors `price_observation`. Shared with the app. |
+| `../lib/extraction/extract.ts` | Calls Claude Haiku with a forced tool to return structured output. Prompt-cached system prompt. Shared with the app. |
 | `dataset.ts` | Golden eval set: synthetic VI/EN broker messages + hand-labeled expected extractions. |
 | `eval.ts` | Runs extraction over the set, aligns predicted↔expected, reports per-field accuracy + precision/recall. |
+
+The extractor lives in `lib/extraction/` (not `phase0/`) so the Next.js ingest route and this
+harness share one source of truth for the prompt and schema.
 
 ## Run
 

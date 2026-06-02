@@ -1,4 +1,4 @@
-import type { PropertyExtraction } from "./schema.ts";
+import type { PropertyExtraction } from "../lib/extraction/schema";
 
 /**
  * Golden evaluation set for the extraction spike (docs/design.md Phase 0).

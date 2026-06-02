@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { ExtractionResult, EXTRACTION_TOOL_SCHEMA } from "./schema.ts";
+import { ExtractionResult, EXTRACTION_TOOL_SCHEMA } from "./schema";
 
 // Cheap, high-volume model for extraction per docs/design.md §8 (model tiering).
 const MODEL = "claude-haiku-4-5-20251001";
