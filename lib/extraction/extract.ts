@@ -1,12 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { ExtractionResult, EXTRACTION_TOOL_SCHEMA } from "./schema";
+import { generateObject } from "ai";
+import { getExtractionModel, EXTRACTOR_VERSION } from "../ai/registry";
+import { ExtractionResult } from "./schema";
 
-// Cheap, high-volume model for extraction per docs/design.md §8 (model tiering).
-const MODEL = "claude-haiku-4-5-20251001";
-
-// Prompt version is recorded alongside every observation for reproducibility
-// (price_observation.extractor in the schema).
-export const EXTRACTOR_VERSION = `${MODEL}/extract-v1`;
+// Re-exported so callers keep importing the extractor surface from one place.
+export { EXTRACTOR_VERSION };
 
 const SYSTEM_PROMPT = `You extract structured real-estate facts from messy broker messages and web posts.
 
@@ -27,43 +24,22 @@ Rules:
 - confidence reflects how certain YOU are about that property's fields (lower it for ambiguous/partial messages).
 - Never invent properties; if the text has no property info, return an empty array.`;
 
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set. Export it before running the harness.");
-  }
-  client ??= new Anthropic();
-  return client;
-}
-
+/**
+ * Extract structured property facts from one raw signal. Provider/model is chosen
+ * by env via lib/ai/registry (Anthropic, OpenAI, or Gemini). The AI SDK validates
+ * the response against the zod schema, so a malformed model reply throws here.
+ */
 export async function extract(rawText: string): Promise<ExtractionResult> {
-  const res = await getClient().messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: [
-      // Cache the static system prompt across calls (docs/design.md §8 cost control).
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
-    tools: [
-      {
-        name: "record_properties",
-        description: "Record the structured property facts extracted from the message.",
-        input_schema: EXTRACTION_TOOL_SCHEMA,
-      },
-    ],
-    tool_choice: { type: "tool", name: "record_properties" },
-    messages: [{ role: "user", content: rawText }],
+  const { object } = await generateObject({
+    model: getExtractionModel(),
+    schema: ExtractionResult,
+    system: SYSTEM_PROMPT,
+    prompt: rawText,
   });
-
-  const toolUse = res.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Model did not return the expected tool call.");
-  }
-  // Validate against zod so a malformed model response fails loudly here, not downstream.
-  return ExtractionResult.parse(toolUse.input);
+  return object;
 }
 
-// `tsx phase0/extract.ts "<message>"` — quick manual one-off.
+// `tsx lib/extraction/extract.ts "<message>"` — quick manual one-off.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const text = process.argv[2];
   if (!text) {

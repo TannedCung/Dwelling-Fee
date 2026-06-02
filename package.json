@@ -16,8 +16,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.71.0",
+    "@ai-sdk/anthropic": "^3.0.81",
+    "@ai-sdk/google": "^3.0.80",
+    "@ai-sdk/openai": "^3.0.67",
     "@neondatabase/serverless": "^0.10.0",
+    "ai": "^6.0.194",
     "drizzle-orm": "^0.45.2",
     "next": "^15.1.0",
     "react": "^19.0.0",

@@ -1,4 +1,3 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 /**
@@ -9,68 +8,31 @@ import { z } from "zod";
  * proves out the exact shape the DB will store.
  */
 export const PropertyExtraction = z.object({
-  // Free-text identity as written by the broker (project/building/unit), kept verbatim-ish.
-  name: z.string().nullable(),
+  name: z.string().nullable().describe("Project/building/unit name as written by the broker."),
   type: z.enum(["apartment", "house", "project", "land", "unknown"]),
   listingType: z.enum(["sale", "rent", "unknown"]),
-  // Normalized to integer VND. "4.5 tỷ" -> 4_500_000_000, "850 triệu" -> 850_000_000.
-  priceVnd: z.number().int().nullable(),
-  // Whether the quoted price is a total or a per-m² figure.
-  priceBasis: z.enum(["total", "per_m2", "unknown"]),
+  priceVnd: z
+    .number()
+    .int()
+    .nullable()
+    .describe("Total or per-m² price normalized to integer VND. tỷ=1e9, triệu=1e6. null if absent."),
+  priceBasis: z
+    .enum(["total", "per_m2", "unknown"])
+    .describe('"per_m2" if the price is quoted per m², otherwise "total".'),
   areaM2: z.number().nullable(),
   bedrooms: z.number().int().nullable(),
-  isNegotiable: z.boolean(),
-  // asking = listed/offered, transacted/sold = a closed deal, unknown otherwise.
-  dealStatus: z.enum(["asking", "transacted", "unknown"]),
-  // Location as written (district/ward/street/project). Geocoding is a later step.
-  locationText: z.string().nullable(),
-  // Extractor's self-rated confidence 0..1 for this property's fields.
-  confidence: z.number().min(0).max(1),
+  isNegotiable: z.boolean().describe("True if price is negotiable (TL, thương lượng, thỏa thuận)."),
+  dealStatus: z
+    .enum(["asking", "transacted", "unknown"])
+    .describe("asking = active listing/offer; transacted = closed deal (đã bán/chốt/sold)."),
+  locationText: z.string().nullable().describe("Location as written (district/ward/street/project)."),
+  confidence: z.number().min(0).max(1).describe("Self-rated 0..1 certainty for this property's fields."),
 });
 
 export type PropertyExtraction = z.infer<typeof PropertyExtraction>;
 
 export const ExtractionResult = z.object({
-  properties: z.array(PropertyExtraction),
+  properties: z.array(PropertyExtraction).describe("One entry per distinct property; empty if none."),
 });
 
 export type ExtractionResult = z.infer<typeof ExtractionResult>;
-
-/**
- * JSON Schema handed to Claude as a forced tool, so the model returns structured
- * output instead of prose. Kept in sync with the zod schema above by hand (small
- * surface; not worth a generator yet).
- */
-export const EXTRACTION_TOOL_SCHEMA: Anthropic.Tool.InputSchema = {
-  type: "object",
-  properties: {
-    properties: {
-      type: "array",
-      description: "One entry per distinct property mentioned in the message.",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: ["string", "null"], description: "Project/building/unit name as written." },
-          type: { type: "string", enum: ["apartment", "house", "project", "land", "unknown"] },
-          listingType: { type: "string", enum: ["sale", "rent", "unknown"] },
-          priceVnd: {
-            type: ["integer", "null"],
-            description: "Total or per-m² price normalized to integer VND. tỷ=1e9, triệu=1e6.",
-          },
-          priceBasis: { type: "string", enum: ["total", "per_m2", "unknown"] },
-          areaM2: { type: ["number", "null"] },
-          bedrooms: { type: ["integer", "null"] },
-          isNegotiable: { type: "boolean", description: "True if price is negotiable (TL, thương lượng)." },
-          dealStatus: { type: "string", enum: ["asking", "transacted", "unknown"] },
-          locationText: { type: ["string", "null"] },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
-        },
-        required: [
-          "name", "type", "listingType", "priceVnd", "priceBasis", "areaM2",
-          "bedrooms", "isNegotiable", "dealStatus", "locationText", "confidence",
-        ],
-      },
-    },
-  },
-  required: ["properties"],
-};
