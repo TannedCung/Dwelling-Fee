@@ -33,9 +33,11 @@ export interface ObservationPoint {
   t: number; // epoch ms (observed_at, fallback created_at)
   pricePerM2: number | null;
   priceVnd: number | null;
+  areaM2: number | null;
   listingType: string;
   dealStatus: string;
   sourceType: string;
+  confidence: number | null;
 }
 
 export interface PropertyDetail {
@@ -60,9 +62,11 @@ export async function getProperty(id: string): Promise<PropertyDetail | null> {
       createdAt: priceObservation.createdAt,
       pricePerM2: priceObservation.pricePerM2,
       priceVnd: priceObservation.priceVnd,
+      areaM2: priceObservation.areaM2,
       listingType: priceObservation.listingType,
       dealStatus: priceObservation.dealStatus,
       sourceType: priceObservation.sourceType,
+      confidence: priceObservation.confidence,
     })
     .from(priceObservation)
     .where(eq(priceObservation.propertyId, id))
@@ -73,9 +77,11 @@ export async function getProperty(id: string): Promise<PropertyDetail | null> {
     t: (o.observedAt ?? o.createdAt).getTime(),
     pricePerM2: o.pricePerM2 != null ? Number(o.pricePerM2) : null,
     priceVnd: o.priceVnd,
+    areaM2: o.areaM2 != null ? Number(o.areaM2) : null,
     listingType: o.listingType,
     dealStatus: o.dealStatus,
     sourceType: o.sourceType,
+    confidence: o.confidence != null ? Number(o.confidence) : null,
   }));
 
   const salePpm2 = observations

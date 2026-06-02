@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProperty } from "../../../lib/properties";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const m = (n: number | null) => (n == null ? "—" : `${(n / 1_000_000).toFixed(1)}M`);
+const cell: CSSProperties = { padding: "6px 10px", borderBottom: "1px solid #eee", textAlign: "right", whiteSpace: "nowrap" };
+const cellL: CSSProperties = { ...cell, textAlign: "left" };
 
 export default async function PropertyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -56,6 +59,44 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
         }))}
         band={{ median: d.median, p25: d.p25, p75: d.p75 }}
       />
+
+      <section style={{ display: "grid", gap: 6 }}>
+        <h2 style={{ fontSize: 16, margin: 0 }}>Observations</h2>
+        {detail.observations.length === 0 ? (
+          <p style={{ color: "#888" }}>No observations linked to this property.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+              <thead>
+                <tr>
+                  <th style={cellL}>Date</th>
+                  <th style={cellL}>Listing</th>
+                  <th style={cellL}>Deal</th>
+                  <th style={cell}>Price</th>
+                  <th style={cell}>Area</th>
+                  <th style={cell}>Price/m²</th>
+                  <th style={cellL}>Source</th>
+                  <th style={cell}>Conf.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.observations.map((o) => (
+                  <tr key={o.id}>
+                    <td style={cellL}>{new Date(o.t).toLocaleDateString()}</td>
+                    <td style={cellL}>{o.listingType}</td>
+                    <td style={cellL}>{o.dealStatus}</td>
+                    <td style={cell}>{o.priceVnd == null ? "—" : m(o.priceVnd)}</td>
+                    <td style={cell}>{o.areaM2 == null ? "—" : `${o.areaM2} m²`}</td>
+                    <td style={cell}>{m(o.pricePerM2)}</td>
+                    <td style={cellL}>{o.sourceType}</td>
+                    <td style={cell}>{o.confidence == null ? "—" : `${(o.confidence * 100).toFixed(0)}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
