@@ -75,6 +75,8 @@ export const property = pgTable(
     // self-ref: null = canonical; otherwise points at the surviving record after a merge
     canonicalPropertyId: uuid("canonical_property_id").references((): AnyPgColumn => property.id),
     name: text("name"),
+    // Diacritic-stripped, lowercased name used as a blocking key for entity resolution (§5).
+    nameNormalized: text("name_normalized"),
     type: propertyType("type").default("unknown").notNull(),
     locationId: uuid("location_id").references(() => location.id),
     geom: pointGeometry("geom"),
@@ -88,7 +90,10 @@ export const property = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("property_geom_idx").using("gist", t.geom)],
+  (t) => [
+    index("property_geom_idx").using("gist", t.geom),
+    index("property_name_norm_idx").on(t.nameNormalized),
+  ],
 );
 
 // ── price_observation — append-only time-series facts ───────────────────────

@@ -24,7 +24,7 @@ export function PasteForm() {
     setMsg(
       data.duplicate
         ? "Already ingested (duplicate)."
-        : `Ingested: ${data.observationsCreated} observation(s), ${data.needsReview} need review.`,
+        : `Ingested ${data.observationsCreated} observation(s): ${data.autoLinked} linked, ${data.created} new, ${data.needsReview} to review.`,
     );
     setText("");
     start(() => router.refresh());

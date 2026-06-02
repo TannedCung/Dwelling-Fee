@@ -17,6 +17,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           lineHeight: 1.5,
         }}
       >
+        <nav style={{ display: "flex", gap: 16, marginBottom: 24, paddingBottom: 12, borderBottom: "1px solid #eee" }}>
+          <a href="/">Ingest</a>
+          <a href="/review">Review</a>
+          <a href="/properties">Properties</a>
+          <a href="/analytics">Analytics</a>
+        </nav>
         {children}
       </body>
     </html>

@@ -10,17 +10,22 @@ structured, queryable market intelligence to support a buying decision. See
 ## Stack
 
 Next.js (App Router) on Vercel · Neon Postgres (PostGIS + pgvector) · Drizzle ORM ·
-Claude (Haiku for extraction) · durable jobs (Inngest/WDK) in Phase 3.
+**Vercel AI SDK** with pluggable providers (Anthropic / OpenAI / Gemini) · durable jobs
+(Inngest/WDK) in Phase 3.
 
 ## Layout
 
 ```
 docs/              design docs (design.md is the source of truth)
 phase0/            extraction eval harness — the de-risking gate (see phase0/README.md)
-lib/extraction/    the shared extractor (prompt + schema) used by app AND harness
-lib/ingest.ts      Phase 1 ingest flow: store raw_signal → extract → persist observations
+lib/ai/            multi-provider LLM registry (provider/model chosen via env)
+lib/extraction/    the shared extractor (prompt + zod schema) used by app AND harness
+lib/ingest.ts      ingest flow: raw_signal → extract → resolve (link/create/queue)
+lib/resolution.ts  deterministic entity resolution (blocking + scoring + decision bands)
+lib/review.ts      review-queue service (HITL link/create/dismiss)
+lib/{properties,analytics,stats,text}.ts   property pages, segmented stats, helpers
 db/                Drizzle schema (§6), client, extensions.sql
-app/               Next.js app: paste-to-ingest UI + /api/ingest route
+app/               Next.js app: Ingest · Review · Properties · Analytics + API routes
 ```
 
 ## Setup
@@ -49,6 +54,13 @@ npm run dev                      # http://localhost:3000 — paste a broker mess
 ## Status
 
 - **Phase 0** — extraction eval harness ✅ (run it; replace synthetic data with real messages)
-- **Phase 1** — manual ingest + entities: paste→extract→store ✅ skeleton; entity resolution &
-  review queue are next (design §5).
-- **Phases 2–4** — analytics/viz, collection agent, outreach. Not started.
+- **Phase 1** — manual ingest + entities ✅: paste → extract → deterministic entity resolution
+  (auto-link / create / queue) → HITL review queue → property living pages with scatter +
+  IQR distribution → segmented analytics (asking ≠ transacted, sample-size guards).
+- **Phase 2** — geocoding + map/heatmap, OCR for screenshots. Not started.
+- **Phase 3** — collection agent (durable crawl) + embeddings-based resolution. Not started.
+- **Phase 4** — broker outreach + valuation alerts. Not started.
+
+Known Phase-1 simplifications (by design, see docs/design.md): resolution is deterministic
+(no embeddings yet); analytics segments by listing/deal type, not yet by location (geocoding
+is Phase 2); "dismiss" leaves an orphan observation rather than deleting (append-only).

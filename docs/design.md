@@ -278,8 +278,9 @@ Rules that keep the numbers defensible:
 | Database | **Neon Postgres** | serverless, branchable; PostGIS + pgvector |
 | DB access | **Drizzle ORM** + Neon driver | HTTP driver for short reads; **pooled** for jobs/migrations |
 | Auth | **Neon Auth** (recommended) or Clerk | small private user set |
-| LLM extraction | **Claude Haiku** (cheap, high-volume) | structured extraction; prompt-cached |
-| Summaries | **Claude Opus/Sonnet** | living-page summaries; debounced, not per-signal |
+| LLM access | **Vercel AI SDK** + provider registry | provider-agnostic; `generateObject` for structured extraction |
+| LLM provider | **Anthropic / OpenAI / Gemini** (env-selectable) | extraction tier: Haiku 4.5 / gpt-4.1-mini / gemini-2.5-flash |
+| Summaries | larger model of chosen provider | living-page summaries; debounced, not per-signal |
 | Embeddings | embeddings → `pgvector` | Phase 3 only; pin model+dim (re-embed on change) |
 | Durable jobs | **Inngest** or **Vercel Workflow (WDK)** | extraction/crawl exceed function timeout; need steps+retries+DLQ |
 | Schedule | **Vercel Cron** → enqueue job | periodic crawl kickoff |

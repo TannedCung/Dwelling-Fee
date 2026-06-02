@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { rawSignal, priceObservation } from "../db/schema";
 import { extract, EXTRACTOR_VERSION } from "./extraction/extract";
+import { resolve, createPropertyFromExtraction } from "./resolution";
+import type { PropertyExtraction } from "./extraction/schema";
 
 // Observations below this extractor confidence are quarantined for human review
 // and excluded from analytics until confirmed (design §2, §7).
@@ -12,13 +14,15 @@ export interface IngestResult {
   rawSignalId: string;
   duplicate: boolean;
   observationsCreated: number;
+  autoLinked: number;
+  created: number;
   needsReview: number;
 }
 
 /**
- * Phase 1 ingest flow (design §4 step 2): store the raw signal immutably, extract
- * structured observations, and persist them unresolved (property_id stays null
- * until entity resolution runs — that's Phase 1's review step / Phase 3 agent).
+ * Phase 1 ingest flow (design §4): store the raw signal immutably, extract
+ * structured observations, then run entity resolution per property —
+ * auto-link to an existing property, create a new one, or quarantine for review.
  *
  * Idempotent on content hash: re-submitting identical text returns the existing
  * signal without re-extracting (cost control, design §8).
@@ -32,7 +36,6 @@ export async function ingestSignal(input: {
   const source = input.sourceType ?? "broker";
   const contentHash = createHash("sha256").update(input.rawText.trim()).digest("hex");
 
-  // Idempotency: skip if this exact text from this source was already ingested.
   const inserted = await db
     .insert(rawSignal)
     .values({ sourceType: source, sourceRef: input.sourceRef ?? null, contentHash, rawText: input.rawText })
@@ -49,49 +52,59 @@ export async function ingestSignal(input: {
           eq(s.contentHash, contentHash),
         ),
     });
-    return { rawSignalId: existing!.id, duplicate: true, observationsCreated: 0, needsReview: 0 };
+    return { rawSignalId: existing!.id, duplicate: true, observationsCreated: 0, autoLinked: 0, created: 0, needsReview: 0 };
   }
 
   const signalId = inserted[0]!.id;
-
   const { properties } = await extract(input.rawText);
 
-  let needsReview = 0;
-  if (properties.length > 0) {
-    const rows = properties.map((p) => {
-      const review = p.confidence < REVIEW_CONFIDENCE_THRESHOLD;
-      if (review) needsReview++;
-      return {
-        rawSignalId: signalId,
-        priceVnd: p.priceVnd,
-        areaM2: p.areaM2 != null ? String(p.areaM2) : null,
-        pricePerM2: derivePricePerM2(p.priceVnd, p.areaM2, p.priceBasis),
-        priceBasis: p.priceBasis,
-        listingType: p.listingType,
-        dealStatus: p.dealStatus,
-        isNegotiable: p.isNegotiable,
-        sourceType: source,
-        confidence: String(p.confidence),
-        needsReview: review,
-        extracted: p,
-        extractor: EXTRACTOR_VERSION,
-      };
+  let autoLinked = 0, created = 0, needsReview = 0;
+  const rows = [];
+
+  for (const p of properties) {
+    let propertyId: string | null = null;
+    let review = p.confidence < REVIEW_CONFIDENCE_THRESHOLD;
+
+    if (!review) {
+      const decision = await resolve(p);
+      if (decision.action === "link") { propertyId = decision.propertyId; autoLinked++; }
+      else if (decision.action === "create") { propertyId = await createPropertyFromExtraction(p); created++; }
+      else review = true; // ambiguous match → queue for human resolution
+    }
+    if (review) needsReview++;
+
+    rows.push({
+      propertyId,
+      rawSignalId: signalId,
+      priceVnd: p.priceVnd,
+      areaM2: p.areaM2 != null ? String(p.areaM2) : null,
+      pricePerM2: derivePricePerM2(p.priceVnd, p.areaM2, p.priceBasis),
+      priceBasis: p.priceBasis,
+      listingType: p.listingType,
+      dealStatus: p.dealStatus,
+      isNegotiable: p.isNegotiable,
+      sourceType: source,
+      confidence: String(p.confidence),
+      needsReview: review,
+      extracted: p,
+      extractor: EXTRACTOR_VERSION,
     });
-    await db.insert(priceObservation).values(rows);
   }
+
+  if (rows.length > 0) await db.insert(priceObservation).values(rows);
 
   await db
     .update(rawSignal)
     .set({ status: needsReview > 0 ? "needs_review" : "extracted" })
     .where(eq(rawSignal.id, signalId));
 
-  return { rawSignalId: signalId, duplicate: false, observationsCreated: properties.length, needsReview };
+  return { rawSignalId: signalId, duplicate: false, observationsCreated: properties.length, autoLinked, created, needsReview };
 }
 
-function derivePricePerM2(
+export function derivePricePerM2(
   priceVnd: number | null,
   areaM2: number | null,
-  basis: "total" | "per_m2" | "unknown",
+  basis: PropertyExtraction["priceBasis"],
 ): string | null {
   if (priceVnd == null) return null;
   if (basis === "per_m2") return String(priceVnd);
