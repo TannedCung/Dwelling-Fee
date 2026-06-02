@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { PropertyExtraction } from "../../../lib/extraction/schema";
+import { missingFields, draftReady } from "../../../lib/extraction/completeness";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -35,7 +36,6 @@ export function IngestChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [committing, setCommitting] = useState(false);
-  const [readyToCommit, setReadyToCommit] = useState(false);
   const [committed, setCommitted] = useState(status === "committed");
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -43,6 +43,9 @@ export function IngestChat({
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, sending]);
+
+  const ready = draftReady(draft);
+  const incompleteCount = draft.filter((p) => missingFields(p).length > 0).length;
 
   async function send() {
     const content = input.trim();
@@ -61,7 +64,6 @@ export function IngestChat({
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "turn failed");
       setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
       setDraft(data.draft);
-      setReadyToCommit(Boolean(data.readyToCommit));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
     } finally {
@@ -157,6 +159,13 @@ export function IngestChat({
                   {p.dealStatus} · conf {(p.confidence * 100).toFixed(0)}%
                   {p.locationText && ` · ${p.locationText}`}
                 </div>
+                {missingFields(p).length > 0 ? (
+                  <div style={{ color: "#c0392b", fontSize: 11, marginTop: 4 }}>
+                    ⚠ needs: {missingFields(p).join(", ")}
+                  </div>
+                ) : (
+                  <div style={{ color: "#137333", fontSize: 11, marginTop: 4 }}>✓ complete</div>
+                )}
               </li>
             ))}
           </ul>
@@ -174,21 +183,29 @@ export function IngestChat({
             <a href="/" style={{ fontSize: 13 }}>Back to sessions</a>
           </div>
         ) : (
-          <button
-            onClick={commit}
-            disabled={committing || draft.length === 0}
-            style={{
-              padding: "8px 16px",
-              cursor: draft.length === 0 ? "not-allowed" : "pointer",
-              background: readyToCommit ? "#137333" : "#e9ecef",
-              color: readyToCommit ? "#fff" : "#333",
-              border: "none",
-              borderRadius: 6,
-              fontWeight: 600,
-            }}
-          >
-            {committing ? "Committing…" : "Commit draft"}
-          </button>
+          <div style={{ display: "grid", gap: 6 }}>
+            <button
+              onClick={commit}
+              disabled={committing || !ready}
+              title={ready ? "" : "Fill in the required fields first"}
+              style={{
+                padding: "8px 16px",
+                cursor: ready ? "pointer" : "not-allowed",
+                background: ready ? "#137333" : "#e9ecef",
+                color: ready ? "#fff" : "#888",
+                border: "none",
+                borderRadius: 6,
+                fontWeight: 600,
+              }}
+            >
+              {committing ? "Committing…" : "Commit draft"}
+            </button>
+            {!ready && draft.length > 0 && (
+              <span style={{ fontSize: 11, color: "#c0392b" }}>
+                {incompleteCount} propert{incompleteCount === 1 ? "y" : "ies"} still missing required info.
+              </span>
+            )}
+          </div>
         )}
       </aside>
     </div>

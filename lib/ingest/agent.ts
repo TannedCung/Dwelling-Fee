@@ -2,6 +2,7 @@ import { generateObject, type ModelMessage } from "ai";
 import { z } from "zod";
 import { getExtractionModel } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
+import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { getSession, addMessage, updateDraft } from "./session";
 
 /**
@@ -34,12 +35,22 @@ Decode Vietnamese real-estate shorthand (text may mix VI/EN):
 - "đã bán"/"chốt"/"sold" -> transacted; an active listing -> asking.
 - A price written "/m2" means priceBasis="per_m2"; otherwise "total".
 
+GOAL — gather enough to commit. A property is COMPLETE only when it has ALL of:
+  1. price (priceVnd)
+  2. price basis (total or per m²)
+  3. listing type (sale or rent)
+  4. area in m²
+  5. an identity — a project/building name OR a location
+Your job is to OBTAIN these by asking, not to settle for partial data.
+
 Rules:
 - A single message may describe MULTIPLE properties — one draft entry each.
-- Normalize priceVnd to an INTEGER of VND. Use null for genuinely-absent fields; NEVER invent prices or areas.
+- Normalize priceVnd to an INTEGER of VND. Use null for genuinely-absent fields; NEVER invent prices, areas, or any required field to fill a gap.
+- If a property is missing required fields, ASK the user a concise, specific question naming exactly what's needed (e.g. "What's the asking price and area for the Lumi unit?"). Ask only for what's required and still missing.
+- If the user can't provide a required field or says to skip a property, REMOVE that property from the draft.
 - When the user corrects something ("area is 80", "split into 2 units", "that's per m²"), apply it precisely and keep everything else.
-- Be concise. Ask at most one or two clarifying questions per turn, and only when it materially affects the data.
-- Lower confidence for partial/ambiguous properties.`;
+- Only state that the draft is ready once EVERY property is complete. Never claim readiness while anything required is missing.
+- Be concise: at most one or two questions per turn. Lower confidence for ambiguous properties.`;
 
 export interface TurnResult {
   reply: string;
@@ -60,7 +71,10 @@ export async function runTurn(sessionId: string, userContent: string): Promise<T
     content: m.content,
   }));
 
-  const system = `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}`;
+  const outstanding = incompleteSummary(before.draft);
+  const system =
+    `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
+    (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "");
 
   const { object } = await generateObject({
     model: getExtractionModel(),
@@ -73,7 +87,8 @@ export async function runTurn(sessionId: string, userContent: string): Promise<T
   await updateDraft(sessionId, object.properties, title);
   await addMessage(sessionId, "assistant", object.reply);
 
-  return { reply: object.reply, draft: object.properties, readyToCommit: object.readyToCommit };
+  // Readiness is a deterministic gate on required fields — not the model's opinion.
+  return { reply: object.reply, draft: object.properties, readyToCommit: draftReady(object.properties) };
 }
 
 function deriveTitle(properties: PropertyExtraction[], fallback: string): string {

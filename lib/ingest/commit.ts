@@ -4,6 +4,7 @@ import { getDb } from "../../db/client";
 import { rawSignal, ingestSession } from "../../db/schema";
 import { getSession, userSourceText, addMessage } from "./session";
 import { persistDraft, type PersistResult } from "./persist";
+import { draftReady, incompleteSummary } from "../extraction/completeness";
 
 export interface CommitResult extends PersistResult {
   rawSignalId: string;
@@ -20,6 +21,10 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
   if (!session) throw new Error("session not found");
   if (session.status !== "open") throw new Error("session is not open");
   if (session.draft.length === 0) throw new Error("draft is empty — nothing to commit");
+  // Hard gate: never commit a property that lacks required information (§ ingest purpose).
+  if (!draftReady(session.draft)) {
+    throw new Error(`Cannot commit — missing required info:\n${incompleteSummary(session.draft).join("\n")}`);
+  }
 
   const text = (await userSourceText(sessionId)) || `(ingest session ${sessionId})`;
   const contentHash = createHash("sha256").update(text.trim()).digest("hex");
