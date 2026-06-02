@@ -1,0 +1,21 @@
+{
+  "name": "dwelling-fee",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Housing Price Intelligence System",
+  "scripts": {
+    "phase0:eval": "tsx phase0/eval.ts",
+    "phase0:extract": "tsx phase0/extract.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
