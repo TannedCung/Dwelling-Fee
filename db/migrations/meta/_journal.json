@@ -22,6 +22,13 @@
       "when": 1780395686801,
       "tag": "0002_chilly_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780412787239,
+      "tag": "0003_chunky_pestilence",
+      "breakpoints": true
     }
   ]
 }

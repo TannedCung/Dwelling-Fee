@@ -367,6 +367,10 @@ Always render provenance (click a point → raw signal) and the confidence/segme
   OCR for screenshots.
 - **Phase 3 — Collection agent.** Durable scheduled crawl (Cron + Inngest/WDK), idempotent signals,
   geocoding at scale, embeddings + tuned resolution thresholds.
+  - _Scaffolded:_ `collection_source`/`collection_run` tables, a fetcher interface with a
+    deterministic `stub` fetcher (real `http` crawler pending a target/creds decision), a runner that
+    feeds items through `ingestSignal()` (idempotent via `raw_signal` dedup), a Vercel Cron entrypoint
+    (`/api/cron/collect`, guarded by `CRON_SECRET`), a manual trigger, and the `/collect` UI.
 - **Phase 4 — Outreach + intelligence.** Human-approved broker outreach, reputation scoring,
   valuation alerts on under-valued finds.
 

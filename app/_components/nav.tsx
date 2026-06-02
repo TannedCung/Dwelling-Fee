@@ -9,6 +9,7 @@ const TABS = [
   { href: "/review", label: "Review", icon: "list-checks", match: (p: string) => p.startsWith("/review") },
   { href: "/properties", label: "Properties", icon: "building", match: (p: string) => p.startsWith("/properties") },
   { href: "/map", label: "Map", icon: "map-pin", match: (p: string) => p.startsWith("/map") },
+  { href: "/collect", label: "Collect", icon: "globe", match: (p: string) => p.startsWith("/collect") },
   { href: "/analytics", label: "Analytics", icon: "trending-up", match: (p: string) => p.startsWith("/analytics") },
 ];
 

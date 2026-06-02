@@ -12,7 +12,7 @@ test.describe("app shell", () => {
     await expect(page.getByRole("link", { name: "Dwelling Fee" })).toBeVisible();
 
     const nav = page.locator("nav.nav");
-    for (const label of ["Ingest", "Review", "Properties", "Map", "Analytics"]) {
+    for (const label of ["Ingest", "Review", "Properties", "Map", "Collect", "Analytics"]) {
       await expect(nav.getByRole("link", { name: label })).toBeVisible();
     }
   });
@@ -21,6 +21,7 @@ test.describe("app shell", () => {
 const surfaces = [
   { tab: "Review", path: "/review", heading: "Review" },
   { tab: "Properties", path: "/properties", heading: "Properties" },
+  { tab: "Collect", path: "/collect", heading: "Collect" },
   { tab: "Analytics", path: "/analytics", heading: "Analytics" },
 ];
 

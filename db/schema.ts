@@ -167,6 +167,47 @@ export const geocodeCache = pgTable("geocode_cache", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ── collection_source — registered internet sources for the collection agent ─
+// Phase 3 scaffold (design §3.2, §11). Each row is a place to gather listings from.
+// A scheduled job (Vercel Cron) and a manual trigger fetch enabled sources, then
+// feed each item through the same ingestSignal() pipeline as broker messages.
+// Idempotency is handled downstream by raw_signal's (source_type, source_ref,
+// content_hash) dedup, so re-running a source is safe.
+export const collectionKind = pgEnum("collection_kind", ["stub", "http"]);
+export const collectionRunStatus = pgEnum("collection_run_status", ["ok", "error"]);
+
+export const collectionSource = pgTable("collection_source", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  kind: collectionKind("kind").default("stub").notNull(), // which fetcher to use
+  enabled: boolean("enabled").default(true).notNull(),
+  config: jsonb("config"), // fetcher-specific options (selectors, query params, ...)
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastStatus: collectionRunStatus("last_status"),
+  lastError: text("last_error"),
+  lastItemCount: integer("last_item_count"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ── collection_run — per-execution audit for observability ──────────────────
+export const collectionRun = pgTable(
+  "collection_run",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id").references(() => collectionSource.id).notNull(),
+    status: collectionRunStatus("status").notNull(),
+    itemsFetched: integer("items_fetched").default(0).notNull(),
+    signalsNew: integer("signals_new").default(0).notNull(),
+    signalsDuplicate: integer("signals_duplicate").default(0).notNull(),
+    observationsCreated: integer("observations_created").default(0).notNull(),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("collection_run_source_idx").on(t.sourceId, t.startedAt)],
+);
+
 // ── ingest_session — conversational drafting workspace ──────────────────────
 // A session holds an evolving DRAFT (PropertyExtraction[]) built through chat,
 // and is the provenance anchor for the observations committed from it.
