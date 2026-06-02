@@ -11,6 +11,22 @@ function rowsOf<T>(res: unknown): T[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Expand common Vietnamese address shorthand so the geocoder can resolve districts. */
+function expandVn(s: string): string {
+  return s
+    .replace(/\bQ\.?\s?(\d{1,2})\b/gi, "Quận $1") // Q9 → Quận 9
+    .replace(/\bP\.?\s?(\d{1,2})\b/g, "Phường $1"); // P.3 → Phường 3
+}
+
+/** Build a geocoder query from a property's name + address, deduped and expanded. */
+function buildQuery(name: string | null, addressText: string | null): string {
+  const parts = [name, addressText]
+    .filter((s): s is string => Boolean(s))
+    .map((s) => expandVn(s.trim()));
+  const unique = [...new Set(parts)];
+  return unique.join(", ") + ", Vietnam";
+}
+
 export async function pendingGeocodeCount(): Promise<number> {
   const db = getDb();
   const res = await db.execute(
@@ -43,8 +59,7 @@ export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   let geocoded = 0, failed = 0;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
-    const query = [row.name, row.address_text].filter(Boolean).join(", ") + ", Vietnam";
-    const pt = await geocode(query);
+    const pt = await geocode(buildQuery(row.name, row.address_text));
     if (pt) {
       await db.execute(
         sql`update property set geom = ST_SetSRID(ST_MakePoint(${pt.lng}, ${pt.lat}), 4326), updated_at = now() where id = ${row.id}`,
