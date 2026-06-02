@@ -1,68 +1,56 @@
-import { desc, eq, sql } from "drizzle-orm";
-import { getDb } from "../db/client";
-import { rawSignal, priceObservation } from "../db/schema";
-import { PasteForm } from "./paste-form";
+import Link from "next/link";
+import { listSessions, type SessionListItem } from "../lib/ingest";
+import { NewSessionButton } from "./_components/new-session-button";
 
-// Reads live data each request; no static prerender.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-async function recentSignals() {
-  const db = getDb();
-  return db
-    .select({
-      id: rawSignal.id,
-      rawText: rawSignal.rawText,
-      status: rawSignal.status,
-      ingestedAt: rawSignal.ingestedAt,
-      obsCount: sql<number>`count(${priceObservation.id})`.mapWith(Number),
-    })
-    .from(rawSignal)
-    .leftJoin(priceObservation, eq(priceObservation.rawSignalId, rawSignal.id))
-    .groupBy(rawSignal.id)
-    .orderBy(desc(rawSignal.ingestedAt))
-    .limit(20);
-}
+const STATUS_COLOR: Record<string, string> = { open: "#1a73e8", committed: "#137333", abandoned: "#999" };
 
 export default async function Home() {
-  let signals: Awaited<ReturnType<typeof recentSignals>> = [];
+  let sessions: SessionListItem[] = [];
   let error: string | null = null;
   try {
-    signals = await recentSignals();
+    sessions = await listSessions();
   } catch (e) {
     error = e instanceof Error ? e.message : "database unavailable";
   }
 
   return (
-    <main style={{ display: "grid", gap: 24 }}>
+    <main style={{ display: "grid", gap: 20 }}>
       <header>
-        <h1 style={{ marginBottom: 4 }}>Dwelling Fee</h1>
+        <h1 style={{ marginBottom: 4 }}>Ingest</h1>
         <p style={{ color: "#666", margin: 0 }}>
-          Paste a broker message — it&apos;s stored verbatim, then extracted into structured price
-          observations. Low-confidence extractions are flagged for review.
+          Start a conversation to turn broker messages into structured property records. Paste, refine
+          with the assistant, then commit — committed observations trace back to their session.
         </p>
       </header>
 
-      <PasteForm />
+      <NewSessionButton />
 
       <section>
-        <h2 style={{ fontSize: 18 }}>Recent signals</h2>
+        <h2 style={{ fontSize: 18 }}>Sessions</h2>
         {error ? (
-          <p style={{ color: "#b00" }}>
-            Database not reachable ({error}). Set <code>DATABASE_URL</code>, run{" "}
-            <code>db/extensions.sql</code>, then <code>npm run db:push</code>.
-          </p>
-        ) : signals.length === 0 ? (
-          <p style={{ color: "#888" }}>No signals yet — paste one above.</p>
+          <p style={{ color: "#b00" }}>Database not reachable ({error}).</p>
+        ) : sessions.length === 0 ? (
+          <p style={{ color: "#888" }}>No sessions yet — start one above.</p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 10 }}>
-            {signals.map((s) => (
+          <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
+            {sessions.map((s) => (
               <li key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <span style={{ fontSize: 13, color: "#888" }}>{s.status}</span>
-                  <span style={{ fontSize: 13, color: "#888" }}>{s.obsCount} obs</span>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                  <Link href={`/ingest/${s.id}`} style={{ fontWeight: 600 }}>
+                    {s.title ?? "Untitled session"}
+                  </Link>
+                  <span style={{ fontSize: 12, color: STATUS_COLOR[s.status] ?? "#888" }}>{s.status}</span>
                 </div>
-                <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{s.rawText}</p>
+                <div style={{ fontSize: 13, color: "#888" }}>
+                  {s.status === "committed"
+                    ? `${s.committedObs} observation(s) committed`
+                    : `${s.draftCount} propert${s.draftCount === 1 ? "y" : "ies"} in draft`}
+                  {" · "}
+                  {new Date(s.createdAt).toLocaleDateString()}
+                </div>
               </li>
             ))}
           </ul>

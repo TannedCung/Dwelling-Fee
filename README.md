@@ -20,7 +20,8 @@ docs/              design docs (design.md is the source of truth)
 phase0/            extraction eval harness — the de-risking gate (see phase0/README.md)
 lib/ai/            multi-provider LLM registry (provider/model chosen via env)
 lib/extraction/    the shared extractor (prompt + zod schema) used by app AND harness
-lib/ingest.ts      ingest flow: raw_signal → extract → resolve (link/create/queue)
+lib/ingest/        conversational ingest: session + chat agent + draft → commit (+ provenance);
+                   also a one-shot ingestSignal() for programmatic/agent use
 lib/resolution.ts  deterministic entity resolution (blocking + scoring + decision bands)
 lib/review.ts      review-queue service (HITL link/create/dismiss)
 lib/{properties,analytics,stats,text}.ts   property pages, segmented stats, helpers
@@ -54,9 +55,11 @@ npm run dev                      # http://localhost:3000 — paste a broker mess
 ## Status
 
 - **Phase 0** — extraction eval harness ✅ (run it; replace synthetic data with real messages)
-- **Phase 1** — manual ingest + entities ✅: paste → extract → deterministic entity resolution
-  (auto-link / create / queue) → HITL review queue → property living pages with scatter +
-  IQR distribution → segmented analytics (asking ≠ transacted, sample-size guards).
+- **Phase 1** — conversational ingest + entities ✅: an **ingest session** (chatbot) drafts
+  structured records from pasted messages and refines them through conversation, then commits →
+  deterministic entity resolution (auto-link / create / queue) → HITL review queue → property
+  living pages with scatter + IQR distribution → segmented analytics (asking ≠ transacted,
+  sample-size guards). Committed observations carry session + raw-signal provenance.
 - **Phase 2** — geocoding + map/heatmap, OCR for screenshots. Not started.
 - **Phase 3** — collection agent (durable crawl) + embeddings-based resolution. Not started.
 - **Phase 4** — broker outreach + valuation alerts. Not started.

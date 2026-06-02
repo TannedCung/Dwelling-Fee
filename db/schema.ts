@@ -39,6 +39,8 @@ export const rawSignal = pgTable(
     capturedAt: timestamp("captured_at", { withTimezone: true }),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).defaultNow().notNull(),
     status: signalStatus("status").default("pending").notNull(),
+    // The conversational ingest session that produced this signal (null for one-shot ingest).
+    ingestSessionId: uuid("ingest_session_id").references((): AnyPgColumn => ingestSession.id),
   },
   (t) => [unique("raw_signal_dedup").on(t.sourceType, t.sourceRef, t.contentHash)],
 );
@@ -104,6 +106,8 @@ export const priceObservation = pgTable(
     // nullable until entity resolution links it; points at canonical after merge
     propertyId: uuid("property_id").references(() => property.id),
     rawSignalId: uuid("raw_signal_id").references(() => rawSignal.id).notNull(),
+    // Conversation provenance: the ingest session this observation was drafted in (null for one-shot).
+    ingestSessionId: uuid("ingest_session_id").references((): AnyPgColumn => ingestSession.id),
     brokerContactId: uuid("broker_contact_id").references(() => brokerContact.id),
     priceVnd: bigint("price_vnd", { mode: "number" }),
     areaM2: numeric("area_m2"),
@@ -149,3 +153,34 @@ export const extractionJob = pgTable("extraction_job", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
+
+// ── ingest_session — conversational drafting workspace ──────────────────────
+// A session holds an evolving DRAFT (PropertyExtraction[]) built through chat,
+// and is the provenance anchor for the observations committed from it.
+export const ingestSessionStatus = pgEnum("ingest_session_status", ["open", "committed", "abandoned"]);
+export const ingestRole = pgEnum("ingest_role", ["user", "assistant"]);
+
+export const ingestSession = pgTable("ingest_session", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  status: ingestSessionStatus("status").default("open").notNull(),
+  sourceType: sourceType("source_type").default("broker").notNull(),
+  brokerContactId: uuid("broker_contact_id").references(() => brokerContact.id),
+  title: text("title"), // short human-readable label, derived from the first paste
+  draft: jsonb("draft"), // current PropertyExtraction[] being assembled
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  committedAt: timestamp("committed_at", { withTimezone: true }),
+});
+
+// ── ingest_message — the chat transcript (context + provenance) ─────────────
+export const ingestMessage = pgTable(
+  "ingest_message",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id").references(() => ingestSession.id).notNull(),
+    role: ingestRole("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("ingest_message_session_idx").on(t.sessionId, t.createdAt)],
+);

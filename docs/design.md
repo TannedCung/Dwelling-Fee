@@ -68,6 +68,11 @@ Everything downstream treats broker and web input identically.
 - Messy, partial, **often multiple properties per message**, mixed VI/EN, abbreviations
   (`2PN` = 2 bedrooms, `sổ hồng/SHR` = land title, `tỷ` = billion VND, `TL` = negotiable).
 - Stored verbatim; never mutated.
+- **Ingested conversationally** (not one-shot): a human pastes into an **ingest session**, the
+  assistant extracts a **draft** and asks clarifying questions, the human refines through chat,
+  then **commits**. The session is the provenance anchor — committed observations link back to it
+  (`price_observation.ingest_session_id`) and to the source text (`raw_signal`). The one-shot path
+  (`lib/ingest` → `ingestSignal`) is retained for the future collection agent (§3.2).
 
 ### 3.2 Collection agent (internet) — first-class, not "future"
 - Crawls real-estate listing sites and forums on a **schedule** and on-demand.
@@ -212,6 +217,26 @@ extracted       jsonb                      -- full extraction payload
 extractor       text                       -- model + prompt version, for reproducibility
 created_at      timestamptz default now()
 ```
+
+### `ingest_session` / `ingest_message` — conversational drafting + provenance
+```sql
+-- ingest_session: one drafting conversation
+id            uuid pk
+status        text     -- 'open'|'committed'|'abandoned'
+source_type   text
+title         text
+draft         jsonb    -- current PropertyExtraction[] being assembled
+created_at / updated_at / committed_at  timestamptz
+
+-- ingest_message: the chat transcript (context + provenance)
+id            uuid pk
+session_id    uuid fk -> ingest_session
+role          text     -- 'user'|'assistant'
+content       text
+created_at    timestamptz
+```
+`raw_signal.ingest_session_id` and `price_observation.ingest_session_id` tie committed facts back
+to the conversation that produced them.
 
 ### `location` — geo aggregation entity
 ```sql
