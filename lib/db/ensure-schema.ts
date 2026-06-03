@@ -51,3 +51,75 @@ export async function ensurePropertyHierarchySchema(db: DbExecutor = getDb()): P
 
   return { applied: STATEMENTS.length, missing };
 }
+
+const COLLECTION_STATEMENTS = [
+  sql`ALTER TABLE "collection_run" ADD COLUMN IF NOT EXISTS "pages_fetched" integer DEFAULT 0 NOT NULL`,
+  sql`ALTER TABLE "collection_run" ADD COLUMN IF NOT EXISTS "pages_skipped_unchanged" integer DEFAULT 0 NOT NULL`,
+  sql`ALTER TABLE "collection_run" ADD COLUMN IF NOT EXISTS "pages_failed" integer DEFAULT 0 NOT NULL`,
+  sql`ALTER TABLE "collection_run" ADD COLUMN IF NOT EXISTS "bytes_fetched" integer DEFAULT 0 NOT NULL`,
+  sql`ALTER TABLE "collection_run" ADD COLUMN IF NOT EXISTS "items_extracted" integer DEFAULT 0 NOT NULL`,
+  sql`
+    CREATE TABLE IF NOT EXISTS "collection_page" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "source_id" uuid NOT NULL,
+      "canonical_url" text NOT NULL,
+      "http_status" integer,
+      "content_hash" text,
+      "text_hash" text,
+      "etag" text,
+      "last_modified" text,
+      "fetch_duration_ms" integer,
+      "bytes_fetched" integer DEFAULT 0 NOT NULL,
+      "text_length" integer DEFAULT 0 NOT NULL,
+      "item_count" integer DEFAULT 0 NOT NULL,
+      "last_error" text,
+      "last_fetched_at" timestamp with time zone,
+      "last_raw_signal_id" uuid,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "collection_page_source_url" ON "collection_page" USING btree ("source_id","canonical_url")`,
+  sql`CREATE INDEX IF NOT EXISTS "collection_page_source_idx" ON "collection_page" USING btree ("source_id","last_fetched_at")`,
+];
+
+const COLLECTION_REQUIRED_COLUMNS = [
+  ["collection_run", "pages_fetched"],
+  ["collection_run", "pages_skipped_unchanged"],
+  ["collection_run", "pages_failed"],
+  ["collection_run", "bytes_fetched"],
+  ["collection_run", "items_extracted"],
+  ["collection_page", "canonical_url"],
+  ["collection_page", "text_hash"],
+  ["collection_page", "last_raw_signal_id"],
+] as const;
+
+let collectionSchemaPromise: Promise<{ applied: number; missing: string[] }> | null = null;
+
+export function ensureCollectionSchema(db: DbExecutor = getDb()): Promise<{ applied: number; missing: string[] }> {
+  collectionSchemaPromise ??= ensureCollectionSchemaOnce(db).catch((error) => {
+    collectionSchemaPromise = null;
+    throw error;
+  });
+  return collectionSchemaPromise;
+}
+
+async function ensureCollectionSchemaOnce(db: DbExecutor): Promise<{ applied: number; missing: string[] }> {
+  for (const statement of COLLECTION_STATEMENTS) await db.execute(statement);
+
+  const missing: string[] = [];
+  for (const [table, column] of COLLECTION_REQUIRED_COLUMNS) {
+    const rows = await db.execute(sql`
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${table}
+        and column_name = ${column}
+      limit 1
+    `);
+    const found = Array.isArray(rows) ? rows.length > 0 : (rows as { rows?: unknown[] }).rows?.length;
+    if (!found) missing.push(`${table}.${column}`);
+  }
+
+  return { applied: COLLECTION_STATEMENTS.length, missing };
+}

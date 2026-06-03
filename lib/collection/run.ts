@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/client";
 import { collectionSource, collectionRun, collectionPage } from "../../db/schema";
+import { ensureCollectionSchema } from "../db/ensure-schema";
 import { ingestSignal } from "../ingest";
 import {
   fetcherFor,
@@ -32,6 +33,7 @@ export interface RunSummary {
 }
 
 export async function runSource(sourceId: string): Promise<RunSummary> {
+  await ensureCollectionSchema();
   const db = getDb();
   const source = await db.query.collectionSource.findFirst({ where: eq(collectionSource.id, sourceId) });
   if (!source) throw new Error("collection source not found");
@@ -120,6 +122,7 @@ export async function runSource(sourceId: string): Promise<RunSummary> {
 
 /** Run every enabled source — the scheduled (Cron) entrypoint. */
 export async function runDueSources(): Promise<{ runs: RunSummary[] }> {
+  await ensureCollectionSchema();
   const db = getDb();
   const sources = await db
     .select({ id: collectionSource.id })
@@ -150,6 +153,7 @@ export async function runDueSources(): Promise<{ runs: RunSummary[] }> {
 }
 
 export async function previewSource(sourceId: string): Promise<CollectionFetchResult> {
+  await ensureCollectionSchema();
   const db = getDb();
   const source = await db.query.collectionSource.findFirst({ where: eq(collectionSource.id, sourceId) });
   if (!source) throw new Error("collection source not found");

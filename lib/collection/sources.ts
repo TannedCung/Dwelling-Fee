@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/client";
 import { collectionSource, collectionRun } from "../../db/schema";
+import { ensureCollectionSchema } from "../db/ensure-schema";
 
 export type CollectionKind = "stub" | "http";
 
@@ -19,6 +20,7 @@ export interface SourceView {
 }
 
 export async function listSources(): Promise<SourceView[]> {
+  await ensureCollectionSchema();
   const db = getDb();
   return db.select().from(collectionSource).orderBy(desc(collectionSource.createdAt)) as Promise<SourceView[]>;
 }
@@ -34,6 +36,7 @@ export async function createSource(input: {
   kind?: CollectionKind;
   config?: unknown;
 }): Promise<string> {
+  await ensureCollectionSchema();
   const db = getDb();
   const [row] = await db
     .insert(collectionSource)
@@ -43,6 +46,7 @@ export async function createSource(input: {
 }
 
 export async function setEnabled(id: string, enabled: boolean): Promise<void> {
+  await ensureCollectionSchema();
   const db = getDb();
   await db.update(collectionSource).set({ enabled }).where(eq(collectionSource.id, id));
 }
@@ -66,6 +70,7 @@ export interface RunView {
 }
 
 export async function recentRuns(limit = 20): Promise<RunView[]> {
+  await ensureCollectionSchema();
   const db = getDb();
   return db
     .select()
