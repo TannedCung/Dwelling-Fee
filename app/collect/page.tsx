@@ -1,5 +1,5 @@
 import { listSources, recentRuns, type SourceView, type RunView } from "../../lib/collection";
-import { AddSourceForm, RunButton, EnableToggle } from "./collect-actions";
+import { AddSourceForm, RunButton, EnableToggle, PreviewButton } from "./collect-actions";
 import { Icon } from "../_components/icon";
 import { DatabaseError } from "../_components/notice";
 import { describeError } from "../../lib/page-error";
@@ -18,6 +18,21 @@ function StatusBadge({ status }: { status: "ok" | "error" | null }) {
 }
 
 const when = (d: Date | null) => (d ? new Date(d).toLocaleString() : "—");
+
+function sourceConfigSummary(source: SourceView) {
+  const config = source.config && typeof source.config === "object" && !Array.isArray(source.config) ? source.config as Record<string, unknown> : {};
+  if (source.kind === "stub") return "deterministic sample data";
+  const parts = [
+    `${typeof config.maxPages === "number" ? config.maxPages : 10} max pages`,
+    `${typeof config.maxDepth === "number" ? config.maxDepth : 1} depth`,
+    `${typeof config.maxConcurrency === "number" ? config.maxConcurrency : 2} concurrency`,
+    config.followLinks ? "links" : null,
+    config.useSitemaps ? "sitemaps" : null,
+    config.itemSelector ? "item selector" : null,
+    config.contentSelector ? "content selector" : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
 
 export default async function CollectPage() {
   let sources: SourceView[] = [];
@@ -39,8 +54,8 @@ export default async function CollectPage() {
         <p>
           Registered internet sources. A scheduled job (and the buttons below) fetch listings and feed
           them through the same extract → resolve → review pipeline as broker messages. Re-runs are
-          idempotent — already-seen items are deduplicated. New sources use a deterministic{" "}
-          <strong>stub</strong> fetcher until a real crawler is connected.
+          idempotent — already-seen items are deduplicated. Use <strong>stub</strong> sources for
+          pipeline tests and <strong>HTTP</strong> sources for guarded public-page collection.
         </p>
       </header>
 
@@ -70,6 +85,7 @@ export default async function CollectPage() {
                       </div>
                     </div>
                     <div className="card-sub mono" style={{ wordBreak: "break-all" }}>{s.url}</div>
+                    <div className="card-sub">{sourceConfigSummary(s)}</div>
                     <div className="card-sub">
                       last run {when(s.lastRunAt)}
                       {s.lastItemCount != null && ` · ${s.lastItemCount} items`}
@@ -77,6 +93,7 @@ export default async function CollectPage() {
                     </div>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
                       <RunButton sourceId={s.id} label="Run now" />
+                      <PreviewButton sourceId={s.id} />
                       <EnableToggle id={s.id} enabled={s.enabled} />
                     </div>
                   </div>
@@ -100,6 +117,9 @@ export default async function CollectPage() {
                   <tr>
                     <th>Started</th>
                     <th>Status</th>
+                    <th>Pages</th>
+                    <th>Skip</th>
+                    <th>Fail</th>
                     <th>Items</th>
                     <th>New</th>
                     <th>Dup</th>
@@ -111,6 +131,9 @@ export default async function CollectPage() {
                     <tr key={r.id}>
                       <td className="mono">{when(r.startedAt)}</td>
                       <td><StatusBadge status={r.status} /></td>
+                      <td>{r.pagesFetched}</td>
+                      <td>{r.pagesSkippedUnchanged}</td>
+                      <td>{r.pagesFailed}</td>
                       <td>{r.itemsFetched}</td>
                       <td>{r.signalsNew}</td>
                       <td>{r.signalsDuplicate}</td>

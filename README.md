@@ -61,8 +61,10 @@ npm run dev                      # http://localhost:3000 — paste a broker mess
   living pages with scatter + IQR distribution → segmented analytics (asking ≠ transacted,
   sample-size guards). Committed observations carry session + raw-signal provenance.
 - **Phase 2** — geocoding + map/heatmap, OCR for screenshots. Not started.
-- **Phase 3** — collection agent (durable crawl) + embeddings-based resolution. Not started.
-- **Phase 4** — broker outreach + valuation alerts. Not started.
+- **Phase 3** — collection agent (durable crawl) + embeddings-based resolution. Research/design
+  note: [`docs/collection-agent.md`](docs/collection-agent.md).
+- **Phase 4** — broker outreach + valuation alerts. Zalo-first outreach path is covered in the
+  collection-agent note above.
 
 Known Phase-1 simplifications (by design, see docs/design.md): resolution is deterministic
 (no embeddings yet); analytics segments by listing/deal type, not yet by location (geocoding

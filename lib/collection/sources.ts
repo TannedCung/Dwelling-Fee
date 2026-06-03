@@ -10,6 +10,7 @@ export interface SourceView {
   url: string;
   kind: CollectionKind;
   enabled: boolean;
+  config: unknown;
   lastRunAt: Date | null;
   lastStatus: "ok" | "error" | null;
   lastError: string | null;
@@ -31,11 +32,12 @@ export async function createSource(input: {
   label: string;
   url: string;
   kind?: CollectionKind;
+  config?: unknown;
 }): Promise<string> {
   const db = getDb();
   const [row] = await db
     .insert(collectionSource)
-    .values({ label: input.label, url: input.url, kind: input.kind ?? "stub" })
+    .values({ label: input.label, url: input.url, kind: input.kind ?? "stub", config: input.config ?? null })
     .returning({ id: collectionSource.id });
   return row!.id;
 }
@@ -49,7 +51,12 @@ export interface RunView {
   id: string;
   sourceId: string;
   status: "ok" | "error";
+  pagesFetched: number;
+  pagesSkippedUnchanged: number;
+  pagesFailed: number;
+  bytesFetched: number;
   itemsFetched: number;
+  itemsExtracted: number;
   signalsNew: number;
   signalsDuplicate: number;
   observationsCreated: number;

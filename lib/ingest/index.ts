@@ -29,6 +29,7 @@ export async function ingestSignal(input: {
   rawText: string;
   sourceType?: "broker" | "web" | "agent" | "user";
   sourceRef?: string | null;
+  capturedAt?: Date | null;
   attachments?: Attachment[];
 }): Promise<IngestResult> {
   const source = input.sourceType ?? "broker";
@@ -64,6 +65,7 @@ export async function ingestSignal(input: {
         contentHash,
         rawText: input.rawText || attachments.map((a) => `[image: ${a.filename}] ${a.url}`).join("\n"),
         attachments: attachments.length > 0 ? attachments : null,
+        capturedAt: input.capturedAt ?? null,
       })
       .onConflictDoNothing({ target: [rawSignal.sourceType, rawSignal.sourceRef, rawSignal.contentHash] })
       .returning({ id: rawSignal.id });

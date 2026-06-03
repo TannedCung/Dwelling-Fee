@@ -211,7 +211,12 @@ export const collectionRun = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     sourceId: uuid("source_id").references(() => collectionSource.id).notNull(),
     status: collectionRunStatus("status").notNull(),
+    pagesFetched: integer("pages_fetched").default(0).notNull(),
+    pagesSkippedUnchanged: integer("pages_skipped_unchanged").default(0).notNull(),
+    pagesFailed: integer("pages_failed").default(0).notNull(),
+    bytesFetched: integer("bytes_fetched").default(0).notNull(),
     itemsFetched: integer("items_fetched").default(0).notNull(),
+    itemsExtracted: integer("items_extracted").default(0).notNull(),
     signalsNew: integer("signals_new").default(0).notNull(),
     signalsDuplicate: integer("signals_duplicate").default(0).notNull(),
     observationsCreated: integer("observations_created").default(0).notNull(),
@@ -220,6 +225,36 @@ export const collectionRun = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (t) => [index("collection_run_source_idx").on(t.sourceId, t.startedAt)],
+);
+
+// ── collection_page — per-page cache/observability for crawler runs ─────────
+// Stores metadata and hashes only. Raw HTML is not retained; extracted source
+// text still enters the system through immutable raw_signal rows.
+export const collectionPage = pgTable(
+  "collection_page",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id").references(() => collectionSource.id).notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    httpStatus: integer("http_status"),
+    contentHash: text("content_hash"),
+    textHash: text("text_hash"),
+    etag: text("etag"),
+    lastModified: text("last_modified"),
+    fetchDurationMs: integer("fetch_duration_ms"),
+    bytesFetched: integer("bytes_fetched").default(0).notNull(),
+    textLength: integer("text_length").default(0).notNull(),
+    itemCount: integer("item_count").default(0).notNull(),
+    lastError: text("last_error"),
+    lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
+    lastRawSignalId: uuid("last_raw_signal_id").references(() => rawSignal.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("collection_page_source_url").on(t.sourceId, t.canonicalUrl),
+    index("collection_page_source_idx").on(t.sourceId, t.lastFetchedAt),
+  ],
 );
 
 // ── ingest_session — conversational drafting workspace ──────────────────────
