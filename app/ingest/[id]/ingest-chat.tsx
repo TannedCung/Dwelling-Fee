@@ -58,6 +58,12 @@ interface CommitSummary {
 const vnd = (n: number | null) =>
   n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n) + " ₫";
 
+const EXAMPLES = [
+  "Căn 2PN Eco Green, 71m², chào 4.8 tỷ, block HR2",
+  "Nhà phố ABC, 1 trệt 2 lầu, đã chốt 9.2 tỷ",
+  "Ảnh bảng giá dự án: trích căn, tầng, diện tích và giá",
+];
+
 export function IngestChat({
   sessionId,
   status,
@@ -89,6 +95,8 @@ export function IngestChat({
 
   const ready = draftReady(draft);
   const incompleteCount = draft.filter((p) => missingFields(p).length > 0).length;
+  const completeCount = Math.max(0, draft.length - incompleteCount);
+  const progress = draft.length === 0 ? 0 : Math.round((completeCount / draft.length) * 100);
 
   async function send() {
     const content = input.trim();
@@ -204,6 +212,20 @@ export function IngestChat({
 
         {!committed && (
           <div className="stack" style={{ gap: 10 }}>
+            <div className="filter-chips">
+              {EXAMPLES.map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  className="fchip"
+                  onClick={() => setInput(example)}
+                  disabled={sending}
+                >
+                  <Icon name="sparkles" size={14} className="fc-ico" />
+                  {example}
+                </button>
+              ))}
+            </div>
             <textarea
               className="input"
               value={input}
@@ -265,36 +287,63 @@ export function IngestChat({
           <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
         </div>
 
+        <div className="draft-progress">
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="progress-label">
+            <span>{completeCount}/{draft.length || 0} complete</span>
+            <span>{ready ? "ready to commit" : "needs required fields"}</span>
+          </div>
+        </div>
+
         {draft.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>Nothing yet. Paste a message to start.</p>
         ) : (
-          <div className="stack" style={{ gap: 8 }}>
-            {draft.map((p, i) => (
-              <div key={i} className="draft-item">
-                <div className="dt">{[p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)"}</div>
-                <div className="dmeta">
-                  {p.type} · {p.listingType} · {vnd(p.priceVnd)}
-                  {p.priceBasis === "per_m2" && "/m²"}
-                  {p.areaM2 != null && ` · ${p.areaM2} m²`}
-                  {p.bedrooms != null && ` · ${p.bedrooms}BR`}
-                  {p.isNegotiable && " · TL"}
-                </div>
-                <div className="dsub">
-                  {p.dealStatus} · conf {(p.confidence * 100).toFixed(0)}%
-                  {p.locationText && ` · ${p.locationText}`}
-                  {p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
-                </div>
-                {missingFields(p).length > 0 ? (
-                  <div className="draft-flag needs">
-                    <Icon name="triangle-alert" size={13} /> needs: {missingFields(p).join(", ")}
+          <div className="draft-items">
+            {draft.map((p, i) => {
+              const missing = missingFields(p);
+              const title = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
+              return (
+                <div key={i} className="draft-item">
+                  <div className="di-top">
+                    <div className="di-ico">
+                      <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="dt">{title}</div>
+                      <div className="dsub">
+                        {p.locationText || "No location text"}{p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="draft-flag ok">
-                    <Icon name="check-circle" size={13} /> complete
+                  <div className="di-fields">
+                    <span className="di-field">{p.type}</span>
+                    <span className="di-field">{p.listingType}</span>
+                    <span className="di-field">{p.dealStatus}</span>
+                    <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
+                      {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
+                    </span>
+                    <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
+                    {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
+                    {p.isNegotiable && <span className="di-field">negotiable</span>}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="di-conf">
+                    <span>conf {(p.confidence * 100).toFixed(0)}%</span>
+                    <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
+                  </div>
+                  {missing.length > 0 ? (
+                    <div className="draft-flag needs">
+                      <Icon name="triangle-alert" size={13} /> needs: {missing.join(", ")}
+                    </div>
+                  ) : (
+                    <div className="draft-flag ok">
+                      <Icon name="check-circle" size={13} /> complete
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

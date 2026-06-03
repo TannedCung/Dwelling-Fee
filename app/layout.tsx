@@ -33,8 +33,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               <Link href="/" className="brand">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/logo-mark.svg" alt="" width={34} height={34} />
-                <span className="wm">Dwelling Fee</span>
+                <span className="wm">
+                  Dwelling Fee
+                  <small>Housing price intelligence</small>
+                </span>
               </Link>
+              <div className="topbar-spacer" />
               <Nav reviewCount={reviewCount} />
               <UserMenu />
             </header>

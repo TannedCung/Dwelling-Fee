@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { property, priceObservation } from "../db/schema";
 import { distribution, type Distribution } from "./stats";
@@ -13,6 +13,8 @@ export interface PropertyListItem {
   type: string;
   addressText: string | null;
   obsCount: number;
+  lastSeen: Date | null;
+  saleDistribution: Distribution;
 }
 
 export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
@@ -34,10 +36,39 @@ export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
     .groupBy(property.id)
     .orderBy(desc(sql`count(${priceObservation.id})`))
     .limit(limit);
-  return rows.map((p) => ({
-    ...p,
-    tags: Array.isArray(p.tags) ? p.tags.filter((tag): tag is string => typeof tag === "string") : [],
-  }));
+  const ids = rows.map((p) => p.id);
+  const obs = ids.length === 0
+    ? []
+    : await db
+        .select({
+          propertyId: priceObservation.propertyId,
+          createdAt: priceObservation.createdAt,
+          observedAt: priceObservation.observedAt,
+          listingType: priceObservation.listingType,
+          pricePerM2: priceObservation.pricePerM2,
+        })
+        .from(priceObservation)
+        .where(inArray(priceObservation.propertyId, ids));
+
+  const byProperty = new Map<string, { salePpm2: number[]; lastSeen: Date | null }>();
+  for (const o of obs) {
+    if (!o.propertyId) continue;
+    const bucket = byProperty.get(o.propertyId) ?? { salePpm2: [], lastSeen: null };
+    const seenAt = o.observedAt ?? o.createdAt;
+    if (bucket.lastSeen == null || seenAt > bucket.lastSeen) bucket.lastSeen = seenAt;
+    if (o.listingType === "sale" && o.pricePerM2 != null) bucket.salePpm2.push(Number(o.pricePerM2));
+    byProperty.set(o.propertyId, bucket);
+  }
+
+  return rows.map((p) => {
+    const bucket = byProperty.get(p.id) ?? { salePpm2: [], lastSeen: null };
+    return {
+      ...p,
+      tags: Array.isArray(p.tags) ? p.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      lastSeen: bucket.lastSeen,
+      saleDistribution: distribution(bucket.salePpm2),
+    };
+  });
 }
 
 export interface ObservationPoint {
