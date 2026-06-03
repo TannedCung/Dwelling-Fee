@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { listSessions, type SessionListItem } from "../lib/ingest";
 import { NewSessionButton } from "./_components/new-session-button";
+import { DatabaseError } from "./_components/notice";
+import { describeError } from "../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +19,7 @@ export default async function Home() {
   try {
     sessions = await listSessions();
   } catch (e) {
-    error = e instanceof Error ? e.message : "database unavailable";
+    error = describeError(e, "home");
   }
 
   return (
@@ -37,7 +39,7 @@ export default async function Home() {
       <section className="section">
         <h2>Sessions</h2>
         {error ? (
-          <div className="notice danger">Database not reachable ({error}).</div>
+          <DatabaseError detail={error} />
         ) : sessions.length === 0 ? (
           <div className="empty">No sessions yet — start one above.</div>
         ) : (

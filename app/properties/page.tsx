@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { listProperties, type PropertyListItem } from "../../lib/properties";
+import { DatabaseError } from "../_components/notice";
+import { describeError } from "../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,7 +12,7 @@ export default async function PropertiesPage() {
   try {
     rows = await listProperties();
   } catch (e) {
-    error = e instanceof Error ? e.message : "database unavailable";
+    error = describeError(e, "properties");
   }
 
   return (
@@ -22,7 +24,7 @@ export default async function PropertiesPage() {
       </header>
 
       {error ? (
-        <div className="notice danger">Database not reachable ({error}).</div>
+        <DatabaseError detail={error} />
       ) : rows.length === 0 ? (
         <div className="empty">No properties yet — ingest some signals.</div>
       ) : (

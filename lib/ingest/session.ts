@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "../../db/client";
+import { getDb, type DbExecutor } from "../../db/client";
 import { ingestSession, ingestMessage, priceObservation } from "../../db/schema";
 import { PropertyExtraction } from "../extraction/schema";
 
@@ -63,8 +63,12 @@ export async function getSession(id: string): Promise<SessionView | null> {
   };
 }
 
-export async function addMessage(sessionId: string, role: "user" | "assistant", content: string): Promise<void> {
-  const db = getDb();
+export async function addMessage(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  db: DbExecutor = getDb(),
+): Promise<void> {
   await db.insert(ingestMessage).values({ sessionId, role, content });
   await db.update(ingestSession).set({ updatedAt: new Date() }).where(eq(ingestSession.id, sessionId));
 }

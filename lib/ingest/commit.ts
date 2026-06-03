@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { getDb } from "../../db/client";
+import { transaction } from "../../db/client";
 import { rawSignal, ingestSession } from "../../db/schema";
 import { getSession, userSourceText, addMessage } from "./session";
 import { persistDraft, type PersistResult } from "./persist";
@@ -16,7 +16,8 @@ export interface CommitResult extends PersistResult {
  * close the session. Idempotent on the raw text via the content-hash constraint.
  */
 export async function commitSession(sessionId: string): Promise<CommitResult> {
-  const db = getDb();
+  // Reads (transcript + draft) happen before the transaction; they don't need to
+  // be atomic and shouldn't hold a pooled connection open.
   const session = await getSession(sessionId);
   if (!session) throw new Error("session not found");
   if (session.status !== "open") throw new Error("session is not open");
@@ -29,46 +30,51 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
   const text = (await userSourceText(sessionId)) || `(ingest session ${sessionId})`;
   const contentHash = createHash("sha256").update(text.trim()).digest("hex");
 
-  const inserted = await db
-    .insert(rawSignal)
-    .values({
-      sourceType: session.sourceType,
-      contentHash,
-      rawText: text,
-      ingestSessionId: sessionId,
-      status: "extracted",
-    })
-    .onConflictDoNothing({ target: [rawSignal.sourceType, rawSignal.sourceRef, rawSignal.contentHash] })
-    .returning({ id: rawSignal.id });
+  // Signal + observations + session close + audit message are one atomic unit: a
+  // partial failure must not leave observations written against an open session.
+  return transaction(async (tx) => {
+    const inserted = await tx
+      .insert(rawSignal)
+      .values({
+        sourceType: session.sourceType,
+        contentHash,
+        rawText: text,
+        ingestSessionId: sessionId,
+        status: "extracted",
+      })
+      .onConflictDoNothing({ target: [rawSignal.sourceType, rawSignal.sourceRef, rawSignal.contentHash] })
+      .returning({ id: rawSignal.id });
 
-  let rawSignalId: string;
-  if (inserted.length > 0) {
-    rawSignalId = inserted[0]!.id;
-  } else {
-    const existing = await db.query.rawSignal.findFirst({
-      columns: { id: true },
-      where: (s, { and, eq, isNull }) =>
-        and(eq(s.sourceType, session.sourceType), isNull(s.sourceRef), eq(s.contentHash, contentHash)),
-    });
-    rawSignalId = existing!.id;
-  }
+    let rawSignalId: string;
+    if (inserted.length > 0) {
+      rawSignalId = inserted[0]!.id;
+    } else {
+      const existing = await tx.query.rawSignal.findFirst({
+        columns: { id: true },
+        where: (s, { and, eq, isNull }) =>
+          and(eq(s.sourceType, session.sourceType), isNull(s.sourceRef), eq(s.contentHash, contentHash)),
+      });
+      rawSignalId = existing!.id;
+    }
 
-  const result = await persistDraft(session.draft, {
-    rawSignalId,
-    ingestSessionId: sessionId,
-    sourceType: session.sourceType,
+    const result = await persistDraft(
+      session.draft,
+      { rawSignalId, ingestSessionId: sessionId, sourceType: session.sourceType },
+      tx,
+    );
+
+    await tx
+      .update(ingestSession)
+      .set({ status: "committed", committedAt: new Date(), updatedAt: new Date() })
+      .where(eq(ingestSession.id, sessionId));
+
+    await addMessage(
+      sessionId,
+      "assistant",
+      `Committed ${result.observationsCreated} observation(s): ${result.autoLinked} linked, ${result.created} new propert${result.created === 1 ? "y" : "ies"}, ${result.needsReview} sent to review.`,
+      tx,
+    );
+
+    return { rawSignalId, ...result };
   });
-
-  await db
-    .update(ingestSession)
-    .set({ status: "committed", committedAt: new Date(), updatedAt: new Date() })
-    .where(eq(ingestSession.id, sessionId));
-
-  await addMessage(
-    sessionId,
-    "assistant",
-    `Committed ${result.observationsCreated} observation(s): ${result.autoLinked} linked, ${result.created} new propert${result.created === 1 ? "y" : "ies"}, ${result.needsReview} sent to review.`,
-  );
-
-  return { rawSignalId, ...result };
 }

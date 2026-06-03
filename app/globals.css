@@ -220,6 +220,20 @@ table.data tr.under td { opacity: .5; }
 .notice svg { width: 17px; height: 17px; flex: none; margin-top: 1px; stroke-width: 2; }
 .notice.info { background: var(--info-fill); color: var(--info); }
 .notice.danger { background: var(--danger-fill); color: var(--danger); }
+/* Toast notifications — single global feedback channel (see _components/toast.tsx) */
+.toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; max-width: min(380px, calc(100vw - 40px)); }
+.toast { display: flex; gap: 10px; align-items: flex-start; background: var(--surface); color: var(--ink);
+  border-radius: var(--r-md); padding: 11px 12px 11px 14px; box-shadow: var(--shadow-lg), var(--ring-inset);
+  font: var(--text-body-sm); border-left: 3px solid var(--ink-3); animation: toast-in 180ms ease-out; }
+.toast svg { flex: none; margin-top: 1px; }
+.toast.success { border-left-color: var(--success); color: var(--success); }
+.toast.error { border-left-color: var(--danger); color: var(--danger); }
+.toast.info { border-left-color: var(--info, var(--cocoa)); }
+.toast .toast-msg { color: var(--ink); flex: 1; word-break: break-word; }
+.toast-x { background: none; border: none; cursor: pointer; color: var(--ink-3); padding: 0; display: inline-flex; flex: none; }
+.toast-x:hover { color: var(--ink); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
 .empty { text-align: center; color: var(--ink-3); padding: 40px 0; font: var(--text-body-sm); }
 .empty svg { width: 30px; height: 30px; display: block; margin: 0 auto 10px; color: var(--sage-deep); stroke-width: 1.6; }
 
