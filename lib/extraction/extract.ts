@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import { getExtractionModel, EXTRACTOR_VERSION } from "../ai/registry";
 import { ExtractionResult } from "./schema";
+import type { Attachment } from "../storage/r2";
 
 // Re-exported so callers keep importing the extractor surface from one place.
 export { EXTRACTOR_VERSION };
@@ -16,9 +17,18 @@ The text is Vietnamese real-estate shorthand, sometimes mixed with English. Deco
 - "/m2", "/m²", "1m2" alongside a price means priceBasis="per_m2", otherwise "total".
 - "cho thuê" = rent (listingType="rent"); "bán" / "cần bán" = sale.
 - "đã bán"/"sold"/"chốt" = transacted; an active listing = asking.
+- If images are attached, read visible listing text/screenshots from those images and merge them with the typed text.
 
 Rules:
-- A single message may describe MULTIPLE properties. Return one object per distinct property.
+- A single message may describe MULTIPLE observations/listings. Return one object per distinct observed listing, not one object for every label/token.
+- Separate property identity into hierarchy:
+  projectName = root project/development/place name, without category prefixes.
+  buildingName = block/tower/building/phase, e.g. "Block A", "Tòa S1".
+  houseNumber = unit/apartment/lot/house number, e.g. "Căn 1", "A1204", "LK-12".
+  name = a readable display name for the hierarchy, e.g. "ABC / Block A / Căn 1".
+- Do NOT treat generic unit labels like "Căn 1", "căn số 2", "Unit A1204", or "lô 5" as standalone properties unless there is a project/address context. Put them in houseNumber.
+- Names like "nhà phố ABC", "shophouse ABC", "căn hộ ABC", and "ABC" are the SAME project/property identity. Set projectName="ABC" and put "nhà phố"/"shophouse"/"căn hộ" in tags.
+- Use aliases for observed spelling/name variants and tags for reusable category/context labels; keep tags consistent so properties and observations can share them.
 - Normalize priceVnd to an INTEGER number of VND. If only a per-m² price is given, set priceBasis="per_m2" and put that per-m² figure in priceVnd.
 - Use null for any field genuinely absent. Do NOT guess prices or areas that aren't stated.
 - confidence reflects how certain YOU are about that property's fields (lower it for ambiguous/partial messages).
@@ -29,12 +39,20 @@ Rules:
  * by env via lib/ai/registry (Anthropic, OpenAI, or Gemini). The AI SDK validates
  * the response against the zod schema, so a malformed model reply throws here.
  */
-export async function extract(rawText: string): Promise<ExtractionResult> {
+export async function extract(rawText: string, attachments: Attachment[] = []): Promise<ExtractionResult> {
   const { object } = await generateObject({
     model: getExtractionModel(),
     schema: ExtractionResult,
     system: SYSTEM_PROMPT,
-    prompt: rawText,
+    messages: [{
+      role: "user",
+      content: attachments.length > 0
+        ? [
+          { type: "text", text: rawText || "Extract real-estate listing details from the attached image(s)." },
+          ...attachments.map((a) => ({ type: "image" as const, image: new URL(a.url), mediaType: a.contentType })),
+        ]
+        : rawText,
+    }],
   });
   return object;
 }

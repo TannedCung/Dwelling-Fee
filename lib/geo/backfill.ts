@@ -30,7 +30,8 @@ function buildQuery(name: string | null, addressText: string | null): string {
 export async function pendingGeocodeCount(): Promise<number> {
   const db = getDb();
   const res = await db.execute(
-    sql`select count(*)::int as n from property where geom is null and (address_text is not null or name is not null)`,
+    sql`select count(*)::int as n from property
+        where geom is null and (address_text is not null or name is not null or project_name is not null)`,
   );
   return Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
 }
@@ -50,8 +51,11 @@ export interface BackfillResult {
 export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   const db = getDb();
   const res = await db.execute(
-    sql`select id, name, address_text from property
-        where geom is null and (address_text is not null or name is not null)
+    sql`select id,
+          coalesce(nullif(concat_ws(' ', project_name, building_name, house_number), ''), name) as name,
+          address_text
+        from property
+        where geom is null and (address_text is not null or name is not null or project_name is not null)
         order by created_at limit ${limit}`,
   );
   const rows = rowsOf<{ id: string; name: string | null; address_text: string | null }>(res);
@@ -87,7 +91,9 @@ export interface MapPoint {
 export async function mapPoints(): Promise<MapPoint[]> {
   const db = getDb();
   const res = await db.execute(sql`
-    select p.id, p.name, ST_Y(p.geom) as lat, ST_X(p.geom) as lng,
+    select p.id,
+      coalesce(nullif(concat_ws(' / ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
+      ST_Y(p.geom) as lat, ST_X(p.geom) as lng,
       percentile_cont(0.5) within group (order by o.price_per_m2)
         filter (where o.listing_type = 'sale' and o.price_per_m2 is not null and not o.needs_review) as median_ppm2,
       count(o.id) filter (where o.price_per_m2 is not null and not o.needs_review) as n

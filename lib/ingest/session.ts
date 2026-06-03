@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb, type DbExecutor } from "../../db/client";
 import { ingestSession, ingestMessage, priceObservation } from "../../db/schema";
 import { PropertyExtraction } from "../extraction/schema";
+import { parseAttachments, type Attachment } from "../storage/r2";
 
 export type SourceType = "broker" | "web" | "agent" | "user";
 export type SessionStatus = "open" | "committed" | "abandoned";
@@ -19,6 +20,7 @@ export interface SessionMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  attachments: Attachment[];
   createdAt: Date;
 }
 
@@ -48,7 +50,13 @@ export async function getSession(id: string): Promise<SessionView | null> {
   const s = await db.query.ingestSession.findFirst({ where: eq(ingestSession.id, id) });
   if (!s) return null;
   const messages = await db
-    .select({ id: ingestMessage.id, role: ingestMessage.role, content: ingestMessage.content, createdAt: ingestMessage.createdAt })
+    .select({
+      id: ingestMessage.id,
+      role: ingestMessage.role,
+      content: ingestMessage.content,
+      attachments: ingestMessage.attachments,
+      createdAt: ingestMessage.createdAt,
+    })
     .from(ingestMessage)
     .where(eq(ingestMessage.sessionId, id))
     .orderBy(asc(ingestMessage.createdAt));
@@ -59,7 +67,7 @@ export async function getSession(id: string): Promise<SessionView | null> {
     title: s.title,
     draft: parseDraft(s.draft),
     committedAt: s.committedAt,
-    messages,
+    messages: messages.map((m) => ({ ...m, attachments: parseAttachments(m.attachments) })),
   };
 }
 
@@ -67,9 +75,17 @@ export async function addMessage(
   sessionId: string,
   role: "user" | "assistant",
   content: string,
-  db: DbExecutor = getDb(),
+  dbOrAttachments: DbExecutor | Attachment[] = getDb(),
+  attachments: Attachment[] = [],
 ): Promise<void> {
-  await db.insert(ingestMessage).values({ sessionId, role, content });
+  const db = Array.isArray(dbOrAttachments) ? getDb() : dbOrAttachments;
+  const files = Array.isArray(dbOrAttachments) ? dbOrAttachments : attachments;
+  await db.insert(ingestMessage).values({
+    sessionId,
+    role,
+    content,
+    attachments: files.length > 0 ? files : null,
+  });
   await db.update(ingestSession).set({ updatedAt: new Date() }).where(eq(ingestSession.id, sessionId));
 }
 
@@ -127,4 +143,14 @@ export async function userSourceText(sessionId: string): Promise<string> {
     .where(and(eq(ingestMessage.sessionId, sessionId), eq(ingestMessage.role, "user")))
     .orderBy(asc(ingestMessage.createdAt));
   return rows.map((r) => r.content).join("\n\n---\n\n");
+}
+
+export async function userAttachments(sessionId: string): Promise<Attachment[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ attachments: ingestMessage.attachments })
+    .from(ingestMessage)
+    .where(and(eq(ingestMessage.sessionId, sessionId), eq(ingestMessage.role, "user")))
+    .orderBy(asc(ingestMessage.createdAt));
+  return rows.flatMap((r) => parseAttachments(r.attachments));
 }

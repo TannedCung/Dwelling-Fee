@@ -4,6 +4,7 @@ import { getExtractionModel } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { getSession, addMessage, updateDraft, type SessionView } from "./session";
+import type { Attachment } from "../storage/r2";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -34,6 +35,7 @@ Decode Vietnamese real-estate shorthand (text may mix VI/EN):
 - "sổ hồng"/"SHR"/"sổ đỏ" -> has title (a note; doesn't change price). "cho thuê" -> rent; "bán"/"cần bán" -> sale.
 - "đã bán"/"chốt"/"sold" -> transacted; an active listing -> asking.
 - A price written "/m2" means priceBasis="per_m2"; otherwise "total".
+- If images are attached, read visible listing text/screenshots from those images and merge it with the typed message.
 
 GOAL — gather enough to commit. A property is COMPLETE only when it has ALL of:
   1. price (priceVnd)
@@ -44,7 +46,10 @@ GOAL — gather enough to commit. A property is COMPLETE only when it has ALL of
 Your job is to OBTAIN these by asking, not to settle for partial data.
 
 Rules:
-- A single message may describe MULTIPLE properties — one draft entry each.
+- A single message may describe MULTIPLE observations/listings — one draft entry each.
+- Split identity into projectName -> buildingName/block -> houseNumber/unit.
+- Do NOT create standalone properties from generic unit labels like "Căn 1", "Căn số 2", "Unit A1204", or "lô 5"; put those in houseNumber and ask for project/address if missing.
+- Treat "nhà phố ABC", "shophouse ABC", and "ABC" as the same project/property identity. Use projectName="ABC"; put category words like "nhà phố" in tags and observed variants in aliases.
 - Normalize priceVnd to an INTEGER of VND. Use null for genuinely-absent fields; NEVER invent prices, areas, or any required field to fill a gap.
 - If a property is missing required fields, ASK the user a concise, specific question naming exactly what's needed (e.g. "What's the asking price and area for the Lumi unit?"). Ask only for what's required and still missing.
 - If the user can't provide a required field or says to skip a property, REMOVE that property from the draft.
@@ -65,17 +70,17 @@ type DraftTurnObject = z.infer<typeof DraftTurn>;
  * lost if the model call fails), and assemble the prompt. Used by both the one-shot
  * and streaming paths.
  */
-async function prepareTurn(sessionId: string, userContent: string) {
+async function prepareTurn(sessionId: string, userContent: string, attachments: Attachment[] = []) {
   const before = await getSession(sessionId);
   if (!before) throw new Error("session not found");
   if (before.status !== "open") throw new Error("session is not open");
 
-  await addMessage(sessionId, "user", userContent);
+  await addMessage(sessionId, "user", userContent, attachments);
 
-  const transcript: ModelMessage[] = [...before.messages, { role: "user" as const, content: userContent }].map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const transcript: ModelMessage[] = [
+    ...before.messages,
+    { role: "user" as const, content: userContent, attachments },
+  ].map((m) => toModelMessage(m.role, m.content, m.attachments));
 
   const outstanding = incompleteSummary(before.draft);
   const system =
@@ -99,8 +104,8 @@ async function finalizeTurn(
   return { reply: object.reply, draft: object.properties, readyToCommit: draftReady(object.properties) };
 }
 
-export async function runTurn(sessionId: string, userContent: string): Promise<TurnResult> {
-  const { before, transcript, system } = await prepareTurn(sessionId, userContent);
+export async function runTurn(sessionId: string, userContent: string, attachments: Attachment[] = []): Promise<TurnResult> {
+  const { before, transcript, system } = await prepareTurn(sessionId, userContent, attachments);
   const { object } = await generateObject({
     model: getExtractionModel(),
     schema: DraftTurn,
@@ -121,8 +126,12 @@ export type TurnEvent =
  * the schema) — then persists and yields a final `done` event carrying the
  * validated draft and deterministic readiness flag.
  */
-export async function* streamTurn(sessionId: string, userContent: string): AsyncGenerator<TurnEvent> {
-  const { before, transcript, system } = await prepareTurn(sessionId, userContent);
+export async function* streamTurn(
+  sessionId: string,
+  userContent: string,
+  attachments: Attachment[] = [],
+): AsyncGenerator<TurnEvent> {
+  const { before, transcript, system } = await prepareTurn(sessionId, userContent, attachments);
 
   const stream = streamObject({
     model: getExtractionModel(),
@@ -144,6 +153,17 @@ export async function* streamTurn(sessionId: string, userContent: string): Async
 }
 
 function deriveTitle(properties: PropertyExtraction[], fallback: string): string {
-  const named = properties.find((p) => p.name)?.name;
+  const named = properties.find((p) => p.projectName || p.name)?.projectName ?? properties.find((p) => p.name)?.name;
   return (named ?? fallback).slice(0, 80);
+}
+
+function toModelMessage(role: "user" | "assistant", content: string, attachments: Attachment[] = []): ModelMessage {
+  if (role === "assistant" || attachments.length === 0) return { role, content };
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: content || "Extract real-estate listing details from the attached image(s)." },
+      ...attachments.map((a) => ({ type: "image" as const, image: new URL(a.url), mediaType: a.contentType })),
+    ],
+  };
 }

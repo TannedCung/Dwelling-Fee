@@ -63,6 +63,7 @@ export async function persistDraft(
       sourceType: ctx.sourceType,
       confidence: String(p.confidence),
       needsReview: review,
+      tags: p.tags.length > 0 ? p.tags : null,
       extracted: p,
       extractor: EXTRACTOR_VERSION,
     });

@@ -46,4 +46,4 @@ export function getExtractionModel(): LanguageModel {
 }
 
 // Recorded on every observation (price_observation.extractor) for reproducibility.
-export const EXTRACTOR_VERSION = `${resolveExtractionModelId()}/extract-v1`;
+export const EXTRACTOR_VERSION = `${resolveExtractionModelId()}/extract-v2`;

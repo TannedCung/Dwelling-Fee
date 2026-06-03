@@ -24,7 +24,7 @@ export const REQUIRED_FIELDS: FieldRequirement[] = [
   { key: "priceBasis", label: "price basis (total or per m²)", missing: (p) => p.priceBasis === "unknown" },
   { key: "listingType", label: "listing type (sale or rent)", missing: (p) => p.listingType === "unknown" },
   { key: "area", label: "area (m²)", missing: (p) => p.areaM2 == null },
-  { key: "identity", label: "project name or location", missing: (p) => !p.name && !p.locationText },
+  { key: "identity", label: "project/property identity or location", missing: (p) => !hasIdentity(p) },
 ];
 
 /** Human-readable list of required fields still missing for a property. */
@@ -46,5 +46,17 @@ export function incompleteSummary(properties: PropertyExtraction[]): string[] {
   return properties
     .map((p, i) => ({ p, i, miss: missingFields(p) }))
     .filter((x) => x.miss.length > 0)
-    .map((x) => `#${x.i + 1} ${x.p.name ?? "(unnamed)"}: needs ${x.miss.join(", ")}`);
+    .map((x) => `#${x.i + 1} ${identityLabel(x.p)}: needs ${x.miss.join(", ")}`);
+}
+
+function hasIdentity(p: PropertyExtraction): boolean {
+  if (p.projectName || p.name || p.locationText) return true;
+  // Unit-only labels like "Căn 1" are not enough unless there is a surrounding
+  // location/address context that makes them resolvable.
+  return Boolean(p.houseNumber && p.locationText);
+}
+
+export function identityLabel(p: PropertyExtraction): string {
+  const parts = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean);
+  return parts.length > 0 ? parts.join(" / ") : p.name ?? p.locationText ?? "(unnamed)";
 }

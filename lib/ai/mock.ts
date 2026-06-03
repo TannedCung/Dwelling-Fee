@@ -26,6 +26,11 @@ interface DraftTurnShape {
 function emptyProperty(): PropertyExtraction {
   return {
     name: null,
+    projectName: null,
+    buildingName: null,
+    houseNumber: null,
+    aliases: [],
+    tags: [],
     type: "unknown",
     listingType: "unknown",
     priceVnd: null,
@@ -90,6 +95,11 @@ function detectName(text: string): string | null {
   return explicit ? explicit[1]!.trim() : null;
 }
 
+function detectHouseNumber(text: string): string | null {
+  const m = text.match(/\b(?:căn|can|unit|apt|apartment|lô|lo|lot)\s*[:#-]?\s*([A-Z0-9.-]{1,12})\b/iu);
+  return m ? m[0].trim() : null;
+}
+
 function lastUserText(prompt: LanguageModelV3Prompt): string {
   for (let i = prompt.length - 1; i >= 0; i--) {
     const msg = prompt[i]!;
@@ -145,7 +155,12 @@ export function buildMockTurn(prompt: LanguageModelV3Prompt): DraftTurnShape {
   const bedrooms = detectBedrooms(text);
   if (bedrooms != null) prop.bedrooms = bedrooms;
   const name = detectName(text);
-  if (name) prop.name = name;
+  if (name) {
+    prop.name = name;
+    prop.projectName = name;
+  }
+  const houseNumber = detectHouseNumber(text);
+  if (houseNumber) prop.houseNumber = houseNumber;
   const location = detectLocation(text);
   if (location) prop.locationText = location;
   if (prop.type === "unknown") {
@@ -158,7 +173,7 @@ export function buildMockTurn(prompt: LanguageModelV3Prompt): DraftTurnShape {
   const properties = [...draft.slice(0, -1), prop];
   // If there was no draft yet but we detected nothing useful, keep draft empty.
   const useful =
-    priceVnd != null || listingType || area != null || name || location || draft.length > 0;
+    priceVnd != null || listingType || area != null || name || houseNumber || location || draft.length > 0;
   const finalProps = useful ? properties : [];
 
   const missing = finalProps.flatMap((p) => missingFields(p));

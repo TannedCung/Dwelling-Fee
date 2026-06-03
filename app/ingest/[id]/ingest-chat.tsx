@@ -6,9 +6,17 @@ import { missingFields, draftReady } from "../../../lib/extraction/completeness"
 import { Icon } from "../../_components/icon";
 import { useToast } from "../../_components/toast";
 
+interface ChatAttachment {
+  filename: string;
+  url?: string;
+  contentType?: string;
+  size?: number;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  attachments?: ChatAttachment[];
 }
 
 type TurnEvent =
@@ -50,6 +58,12 @@ interface CommitSummary {
 const vnd = (n: number | null) =>
   n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n) + " ₫";
 
+const EXAMPLES = [
+  "Căn 2PN Eco Green, 71m², chào 4.8 tỷ, block HR2",
+  "Nhà phố ABC, 1 trệt 2 lầu, đã chốt 9.2 tỷ",
+  "Ảnh bảng giá dự án: trích căn, tầng, diện tích và giá",
+];
+
 export function IngestChat({
   sessionId,
   status,
@@ -64,6 +78,7 @@ export function IngestChat({
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [draft, setDraft] = useState<PropertyExtraction[]>(initialDraft);
   const [input, setInput] = useState("");
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingReply, setStreamingReply] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -71,6 +86,7 @@ export function IngestChat({
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const { notify } = useToast();
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(
     () => endRef.current?.scrollIntoView({ behavior: "smooth" }),
@@ -79,24 +95,43 @@ export function IngestChat({
 
   const ready = draftReady(draft);
   const incompleteCount = draft.filter((p) => missingFields(p).length > 0).length;
+  const completeCount = Math.max(0, draft.length - incompleteCount);
+  const progress = draft.length === 0 ? 0 : Math.round((completeCount / draft.length) * 100);
 
   async function send() {
     const content = input.trim();
-    if (!content || sending) return;
+    const images = selectedImages;
+    if ((!content && images.length === 0) || sending) return;
     setInput("");
-    setMessages((m) => [...m, { role: "user", content }]);
+    setSelectedImages([]);
+    if (fileRef.current) fileRef.current.value = "";
+    setMessages((m) => [...m, {
+      role: "user",
+      content,
+      attachments: images.map((file) => ({ filename: file.name, contentType: file.type, size: file.size })),
+    }]);
     setSending(true);
     setStreamingReply(""); // show the assistant bubble immediately, fill as it streams
     try {
+      const body = new FormData();
+      body.set("content", content);
+      for (const image of images) body.append("images", image);
       const res = await fetch(`/api/ingest/session/${sessionId}/message`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content }),
+        ...(images.length > 0
+          ? { body }
+          : { headers: { "content-type": "application/json" }, body: JSON.stringify({ content }) }),
       });
       if (!res.ok || !res.body) {
         // Pre-stream error: server replied with JSON, not an event stream.
         const data = await res.json().catch(() => ({}));
         throw new Error(typeof data.error === "string" ? data.error : "turn failed");
+      }
+      if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+        // A 200 that isn't an event stream means we were redirected away (e.g.
+        // to the sign-in page after the session lapsed). Surface it instead of
+        // silently leaving the assistant bubble stuck on the typing indicator.
+        throw new Error("Your session may have expired — please refresh and sign in again.");
       }
 
       let lastReply = "";
@@ -154,7 +189,17 @@ export function IngestChat({
         <div className="chat-log">
           {messages.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
-              {m.content}
+              {m.content || (m.attachments?.length ? "Image attachment" : "")}
+              {m.attachments && m.attachments.length > 0 && (
+                <div className="attachment-list">
+                  {m.attachments.map((a, j) => (
+                    <a key={j} href={a.url} target="_blank" rel="noreferrer" className="attachment-chip">
+                      <Icon name="image" size={13} />
+                      {a.filename}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           {streamingReply !== null && (
@@ -167,6 +212,20 @@ export function IngestChat({
 
         {!committed && (
           <div className="stack" style={{ gap: 10 }}>
+            <div className="filter-chips">
+              {EXAMPLES.map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  className="fchip"
+                  onClick={() => setInput(example)}
+                  disabled={sending}
+                >
+                  <Icon name="sparkles" size={14} className="fc-ico" />
+                  {example}
+                </button>
+              ))}
+            </div>
             <textarea
               className="input"
               value={input}
@@ -177,10 +236,46 @@ export function IngestChat({
               placeholder="Paste a broker message, or refine the draft… (⌘/Ctrl+Enter to send)"
               rows={3}
             />
-            <button onClick={send} disabled={sending || input.trim().length === 0} className="btn primary" style={{ justifySelf: "start" }}>
-              <Icon name="send" size={16} />
-              {sending ? "Sending…" : "Send"}
-            </button>
+            {selectedImages.length > 0 && (
+              <div className="attachment-list composer">
+                {selectedImages.map((file, i) => (
+                  <button
+                    key={`${file.name}-${i}`}
+                    type="button"
+                    className="attachment-chip removable"
+                    onClick={() => setSelectedImages((files) => files.filter((_, j) => j !== i))}
+                  >
+                    <Icon name="image" size={13} />
+                    {file.name}
+                    <Icon name="x" size={13} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="composer-actions">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => setSelectedImages(Array.from(e.currentTarget.files ?? []))}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={sending}
+                className="btn secondary"
+                title="Attach images"
+              >
+                <Icon name="image" size={16} />
+                Images
+              </button>
+              <button onClick={send} disabled={sending || (input.trim().length === 0 && selectedImages.length === 0)} className="btn primary">
+                <Icon name="send" size={16} />
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
           </div>
         )}
       </section>
@@ -192,35 +287,63 @@ export function IngestChat({
           <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
         </div>
 
+        <div className="draft-progress">
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="progress-label">
+            <span>{completeCount}/{draft.length || 0} complete</span>
+            <span>{ready ? "ready to commit" : "needs required fields"}</span>
+          </div>
+        </div>
+
         {draft.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>Nothing yet. Paste a message to start.</p>
         ) : (
-          <div className="stack" style={{ gap: 8 }}>
-            {draft.map((p, i) => (
-              <div key={i} className="draft-item">
-                <div className="dt">{p.name ?? "(unnamed)"}</div>
-                <div className="dmeta">
-                  {p.type} · {p.listingType} · {vnd(p.priceVnd)}
-                  {p.priceBasis === "per_m2" && "/m²"}
-                  {p.areaM2 != null && ` · ${p.areaM2} m²`}
-                  {p.bedrooms != null && ` · ${p.bedrooms}BR`}
-                  {p.isNegotiable && " · TL"}
-                </div>
-                <div className="dsub">
-                  {p.dealStatus} · conf {(p.confidence * 100).toFixed(0)}%
-                  {p.locationText && ` · ${p.locationText}`}
-                </div>
-                {missingFields(p).length > 0 ? (
-                  <div className="draft-flag needs">
-                    <Icon name="triangle-alert" size={13} /> needs: {missingFields(p).join(", ")}
+          <div className="draft-items">
+            {draft.map((p, i) => {
+              const missing = missingFields(p);
+              const title = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
+              return (
+                <div key={i} className="draft-item">
+                  <div className="di-top">
+                    <div className="di-ico">
+                      <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="dt">{title}</div>
+                      <div className="dsub">
+                        {p.locationText || "No location text"}{p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="draft-flag ok">
-                    <Icon name="check-circle" size={13} /> complete
+                  <div className="di-fields">
+                    <span className="di-field">{p.type}</span>
+                    <span className="di-field">{p.listingType}</span>
+                    <span className="di-field">{p.dealStatus}</span>
+                    <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
+                      {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
+                    </span>
+                    <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
+                    {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
+                    {p.isNegotiable && <span className="di-field">negotiable</span>}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="di-conf">
+                    <span>conf {(p.confidence * 100).toFixed(0)}%</span>
+                    <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
+                  </div>
+                  {missing.length > 0 ? (
+                    <div className="draft-flag needs">
+                      <Icon name="triangle-alert" size={13} /> needs: {missing.join(", ")}
+                    </div>
+                  ) : (
+                    <div className="draft-flag ok">
+                      <Icon name="check-circle" size={13} /> complete
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

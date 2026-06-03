@@ -4,8 +4,13 @@ import { isComplete, draftReady, missingFields } from "./completeness";
 import type { PropertyExtraction } from "./schema";
 
 function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
-  return {
+  const base: PropertyExtraction = {
     name: "Lumi Hanoi",
+    projectName: null,
+    buildingName: null,
+    houseNumber: null,
+    aliases: [],
+    tags: [],
     type: "apartment",
     listingType: "sale",
     priceVnd: 4_500_000_000,
@@ -16,8 +21,8 @@ function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
     dealStatus: "asking",
     locationText: null,
     confidence: 0.9,
-    ...over,
   };
+  return { ...base, ...over };
 }
 
 test("isComplete: a property with all required fields is complete", () => {
@@ -34,7 +39,15 @@ test("missingFields: reports each absent required field", () => {
 
 test("identity: name OR location satisfies the identity requirement", () => {
   assert.equal(isComplete(ex({ name: null, locationText: "Quận 9" })), true);
-  assert.deepEqual(missingFields(ex({ name: null, locationText: null })), ["project name or location"]);
+  assert.deepEqual(missingFields(ex({ name: null, locationText: null })), ["project/property identity or location"]);
+});
+
+test("identity: unit-only house number is not enough without location or project context", () => {
+  assert.deepEqual(
+    missingFields(ex({ name: null, projectName: null, houseNumber: "Căn 1", locationText: null })),
+    ["project/property identity or location"],
+  );
+  assert.equal(isComplete(ex({ name: null, projectName: "ABC", houseNumber: "Căn 1" })), true);
 });
 
 test("dealStatus and type are NOT required (don't block commit)", () => {
