@@ -29,6 +29,21 @@ async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<TurnEv
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const parseBlock = (block: string): TurnEvent | null => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data) return null;
+    try {
+      return JSON.parse(data) as TurnEvent;
+    } catch {
+      return null;
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -37,15 +52,13 @@ async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<TurnEv
     while ((idx = buffer.indexOf("\n\n")) !== -1) {
       const block = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
-      const line = block.split("\n").find((l) => l.startsWith("data:"));
-      if (!line) continue;
-      try {
-        yield JSON.parse(line.slice(5).trim()) as TurnEvent;
-      } catch {
-        /* ignore malformed frame */
-      }
+      const event = parseBlock(block);
+      if (event) yield event;
     }
   }
+  buffer += decoder.decode();
+  const event = parseBlock(buffer);
+  if (event) yield event;
 }
 
 interface CommitSummary {
@@ -147,11 +160,12 @@ export function IngestChat({
       let committedTurn = false;
       for await (const event of readSse(res.body)) {
         if (event.type === "partial") {
-          lastReply = event.reply;
+          if (event.reply) lastReply = event.reply;
           setStreamingReply(event.reply);
         } else if (event.type === "done") {
           committedTurn = true;
-          setMessages((m) => [...m, { role: "assistant", content: event.result.reply, createdAt: new Date().toISOString() }]);
+          const reply = event.result.reply || lastReply || "Draft updated.";
+          setMessages((m) => [...m, { role: "assistant", content: reply, createdAt: new Date().toISOString() }]);
           setDraft(event.result.draft);
           setStreamingReply(null);
         } else if (event.type === "error") {
