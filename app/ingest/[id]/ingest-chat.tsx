@@ -177,7 +177,16 @@ export function IngestChat({
         setStreamingReply(null);
       }
     } catch (e) {
-      notify({ type: "error", message: e instanceof Error ? e.message : "Message failed to send." });
+      const message = e instanceof Error ? e.message : "Message failed to send.";
+      notify({ type: "error", message });
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `I couldn't process that message: ${message}`,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
       setStreamingReply(null);
     } finally {
       setSending(false);
