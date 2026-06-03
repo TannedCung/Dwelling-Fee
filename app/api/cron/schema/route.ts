@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ensurePropertyHierarchySchema } from "../../../../lib/db/ensure-schema";
 import { route, unauthorized } from "../../../../lib/api/respond";
+import { listProperties } from "../../../../lib/properties";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +14,12 @@ export const POST = route("cron.schema", async (req, _ctx, log) => {
   }
 
   const result = await ensurePropertyHierarchySchema();
-  log.info("schema ensured", { applied: result.applied, missing: result.missing.length });
-  return NextResponse.json({ ok: result.missing.length === 0, ...result });
+  const properties = await listProperties(1);
+  log.info("schema ensured", { applied: result.applied, missing: result.missing.length, propertiesQueryRows: properties.length });
+  return NextResponse.json({
+    ok: result.missing.length === 0,
+    propertiesQueryOk: true,
+    propertiesQueryRows: properties.length,
+    ...result,
+  });
 });
