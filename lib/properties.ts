@@ -6,6 +6,10 @@ import { distribution, type Distribution } from "./stats";
 export interface PropertyListItem {
   id: string;
   name: string | null;
+  projectName: string | null;
+  buildingName: string | null;
+  houseNumber: string | null;
+  tags: string[];
   type: string;
   addressText: string | null;
   obsCount: number;
@@ -13,10 +17,14 @@ export interface PropertyListItem {
 
 export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
   const db = getDb();
-  return db
+  const rows = await db
     .select({
       id: property.id,
       name: property.name,
+      projectName: property.projectName,
+      buildingName: property.buildingName,
+      houseNumber: property.houseNumber,
+      tags: property.tags,
       type: property.type,
       addressText: property.addressText,
       obsCount: sql<number>`count(${priceObservation.id})`.mapWith(Number),
@@ -26,6 +34,10 @@ export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
     .groupBy(property.id)
     .orderBy(desc(sql`count(${priceObservation.id})`))
     .limit(limit);
+  return rows.map((p) => ({
+    ...p,
+    tags: Array.isArray(p.tags) ? p.tags.filter((tag): tag is string => typeof tag === "string") : [],
+  }));
 }
 
 export interface ObservationPoint {
@@ -43,6 +55,10 @@ export interface ObservationPoint {
 export interface PropertyDetail {
   id: string;
   name: string | null;
+  projectName: string | null;
+  buildingName: string | null;
+  houseNumber: string | null;
+  tags: string[];
   type: string;
   addressText: string | null;
   observations: ObservationPoint[];
@@ -91,6 +107,10 @@ export async function getProperty(id: string): Promise<PropertyDetail | null> {
   return {
     id: p.id,
     name: p.name,
+    projectName: p.projectName,
+    buildingName: p.buildingName,
+    houseNumber: p.houseNumber,
+    tags: Array.isArray(p.tags) ? p.tags.filter((tag): tag is string => typeof tag === "string") : [],
     type: p.type,
     addressText: p.addressText,
     observations,

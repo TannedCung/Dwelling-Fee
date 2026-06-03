@@ -39,9 +39,12 @@ async function parseSignalRequest(req: Request): Promise<{
   const form = await req.formData();
   const rawText = String(form.get("rawText") ?? "").trim();
   const sourceTypeRaw = form.get("sourceType");
-  const sourceType = typeof sourceTypeRaw === "string" && sourceTypeRaw
-    ? SourceType.parse(sourceTypeRaw)
-    : undefined;
+  let sourceType: "broker" | "web" | "agent" | "user" | undefined;
+  if (typeof sourceTypeRaw === "string" && sourceTypeRaw) {
+    const parsed = SourceType.safeParse(sourceTypeRaw);
+    if (!parsed.success) throw badRequest("invalid sourceType");
+    sourceType = parsed.data;
+  }
   const sourceRefRaw = form.get("sourceRef");
   const sourceRef = typeof sourceRefRaw === "string" && sourceRefRaw ? sourceRefRaw : null;
   const files = form.getAll("images").filter((v): v is File => v instanceof File);

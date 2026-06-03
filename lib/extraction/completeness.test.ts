@@ -42,6 +42,14 @@ test("identity: name OR location satisfies the identity requirement", () => {
   assert.deepEqual(missingFields(ex({ name: null, locationText: null })), ["project/property identity or location"]);
 });
 
+test("identity: unit-only house number is not enough without location or project context", () => {
+  assert.deepEqual(
+    missingFields(ex({ name: null, projectName: null, houseNumber: "Căn 1", locationText: null })),
+    ["project/property identity or location"],
+  );
+  assert.equal(isComplete(ex({ name: null, projectName: "ABC", houseNumber: "Căn 1" })), true);
+});
+
 test("dealStatus and type are NOT required (don't block commit)", () => {
   assert.equal(isComplete(ex({ dealStatus: "unknown", type: "unknown" })), true);
 });

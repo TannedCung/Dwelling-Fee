@@ -21,6 +21,12 @@ function ConfidenceBadge({ value }: { value: number }) {
   );
 }
 
+function extractionTitle(extraction: ReviewItem["extraction"]): string {
+  return [extraction.projectName, extraction.buildingName, extraction.houseNumber].filter(Boolean).join(" / ")
+    || extraction.name
+    || "(no name)";
+}
+
 export default async function ReviewPage() {
   let items: ReviewItem[] = [];
   let error: string | null = null;
@@ -54,9 +60,10 @@ export default async function ReviewPage() {
             <div key={it.observationId} className="card review-item">
               <p className="raw">{it.rawText}</p>
               <div className="review-extract">
-                <strong>{it.extraction.name ?? "(no name)"}</strong>
+                <strong>{extractionTitle(it.extraction)}</strong>
                 <span className="chip">{it.extraction.type}</span>
                 <span className="chip">{it.extraction.listingType}</span>
+                {it.extraction.tags.map((tag) => <span key={tag} className="chip">{tag}</span>)}
                 <span className="mono">{vnd(it.priceVnd)}</span>
                 {it.extraction.areaM2 != null && <span className="mono">{it.extraction.areaM2} m²</span>}
                 {it.confidence != null && <ConfidenceBadge value={it.confidence} />}

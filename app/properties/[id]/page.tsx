@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProperty } from "../../../lib/properties";
+import { getProperty, type PropertyDetail } from "../../../lib/properties";
 import { PriceScatter } from "../../_components/price-scatter";
 import { MIN_SAMPLE } from "../../../lib/stats";
 import { Icon } from "../../_components/icon";
@@ -11,6 +11,12 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const m = (n: number | null) => (n == null ? "—" : `${(n / 1_000_000).toFixed(1)}M`);
+
+function propertyTitle(detail: PropertyDetail): string {
+  return [detail.projectName, detail.buildingName, detail.houseNumber].filter(Boolean).join(" / ")
+    || detail.name
+    || "(unnamed property)";
+}
 
 export default async function PropertyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -32,9 +38,10 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
       </Link>
       <header className="page-head">
         <div className="eyebrow">Living page</div>
-        <h1>{detail.name ?? "(unnamed property)"}</h1>
+        <h1>{propertyTitle(detail)}</h1>
         <p>
           {detail.type}
+          {detail.tags.length > 0 && ` · ${detail.tags.join(", ")}`}
           {detail.addressText && ` · ${detail.addressText}`} · {detail.observations.length} observations
         </p>
       </header>

@@ -263,6 +263,12 @@ table.data tr.under td { opacity: .5; }
 .bubble { max-width: 85%; padding: 9px 13px; border-radius: var(--r-md); white-space: pre-wrap; font: var(--text-body-sm); }
 .bubble.user { justify-self: end; background: var(--cocoa); color: var(--ink-on-dark); border-bottom-right-radius: var(--r-xs); }
 .bubble.assistant { justify-self: start; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm), var(--ring-inset); border-bottom-left-radius: var(--r-xs); }
+.attachment-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.attachment-list.composer { margin-top: 0; }
+.attachment-chip { max-width: 220px; min-height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--r-xs); border: 0; background: rgba(255,255,255,.14); color: inherit; font: var(--text-caption); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip svg { flex: 0 0 auto; }
+.attachment-chip.removable { cursor: pointer; background: var(--surface-2); color: var(--ink-2); box-shadow: var(--ring-inset); }
+.composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .typing-dots { display: inline-flex; gap: 4px; align-items: center; height: 1em; }
 .typing-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-2); opacity: 0.4; animation: typing-blink 1.2s infinite ease-in-out; }
 .typing-dots span:nth-child(2) { animation-delay: 0.2s; }

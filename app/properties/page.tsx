@@ -6,6 +6,12 @@ import { describeError } from "../../lib/page-error";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function propertyTitle(p: PropertyListItem): string {
+  return [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ")
+    || p.name
+    || "(unnamed property)";
+}
+
 export default async function PropertiesPage() {
   let rows: PropertyListItem[] = [];
   let error: string | null = null;
@@ -32,11 +38,12 @@ export default async function PropertiesPage() {
           {rows.map((p) => (
             <Link key={p.id} href={`/properties/${p.id}`} className="card interactive">
               <div className="card-row">
-                <span className="card-title">{p.name ?? "(unnamed property)"}</span>
+                <span className="card-title">{propertyTitle(p)}</span>
                 <span className="chip">{p.obsCount} obs</span>
               </div>
               <div className="card-sub">
                 {p.type}
+                {p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
                 {p.addressText && ` · ${p.addressText}`}
               </div>
             </Link>

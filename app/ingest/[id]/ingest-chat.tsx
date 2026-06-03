@@ -6,9 +6,17 @@ import { missingFields, draftReady } from "../../../lib/extraction/completeness"
 import { Icon } from "../../_components/icon";
 import { useToast } from "../../_components/toast";
 
+interface ChatAttachment {
+  filename: string;
+  url?: string;
+  contentType?: string;
+  size?: number;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  attachments?: ChatAttachment[];
 }
 
 type TurnEvent =
@@ -64,6 +72,7 @@ export function IngestChat({
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [draft, setDraft] = useState<PropertyExtraction[]>(initialDraft);
   const [input, setInput] = useState("");
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingReply, setStreamingReply] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -71,6 +80,7 @@ export function IngestChat({
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const { notify } = useToast();
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(
     () => endRef.current?.scrollIntoView({ behavior: "smooth" }),
@@ -82,16 +92,27 @@ export function IngestChat({
 
   async function send() {
     const content = input.trim();
-    if (!content || sending) return;
+    const images = selectedImages;
+    if ((!content && images.length === 0) || sending) return;
     setInput("");
-    setMessages((m) => [...m, { role: "user", content }]);
+    setSelectedImages([]);
+    if (fileRef.current) fileRef.current.value = "";
+    setMessages((m) => [...m, {
+      role: "user",
+      content,
+      attachments: images.map((file) => ({ filename: file.name, contentType: file.type, size: file.size })),
+    }]);
     setSending(true);
     setStreamingReply(""); // show the assistant bubble immediately, fill as it streams
     try {
+      const body = new FormData();
+      body.set("content", content);
+      for (const image of images) body.append("images", image);
       const res = await fetch(`/api/ingest/session/${sessionId}/message`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content }),
+        ...(images.length > 0
+          ? { body }
+          : { headers: { "content-type": "application/json" }, body: JSON.stringify({ content }) }),
       });
       if (!res.ok || !res.body) {
         // Pre-stream error: server replied with JSON, not an event stream.
@@ -160,7 +181,17 @@ export function IngestChat({
         <div className="chat-log">
           {messages.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
-              {m.content}
+              {m.content || (m.attachments?.length ? "Image attachment" : "")}
+              {m.attachments && m.attachments.length > 0 && (
+                <div className="attachment-list">
+                  {m.attachments.map((a, j) => (
+                    <a key={j} href={a.url} target="_blank" rel="noreferrer" className="attachment-chip">
+                      <Icon name="image" size={13} />
+                      {a.filename}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           {streamingReply !== null && (
@@ -183,10 +214,46 @@ export function IngestChat({
               placeholder="Paste a broker message, or refine the draft… (⌘/Ctrl+Enter to send)"
               rows={3}
             />
-            <button onClick={send} disabled={sending || input.trim().length === 0} className="btn primary" style={{ justifySelf: "start" }}>
-              <Icon name="send" size={16} />
-              {sending ? "Sending…" : "Send"}
-            </button>
+            {selectedImages.length > 0 && (
+              <div className="attachment-list composer">
+                {selectedImages.map((file, i) => (
+                  <button
+                    key={`${file.name}-${i}`}
+                    type="button"
+                    className="attachment-chip removable"
+                    onClick={() => setSelectedImages((files) => files.filter((_, j) => j !== i))}
+                  >
+                    <Icon name="image" size={13} />
+                    {file.name}
+                    <Icon name="x" size={13} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="composer-actions">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => setSelectedImages(Array.from(e.currentTarget.files ?? []))}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={sending}
+                className="btn secondary"
+                title="Attach images"
+              >
+                <Icon name="image" size={16} />
+                Images
+              </button>
+              <button onClick={send} disabled={sending || (input.trim().length === 0 && selectedImages.length === 0)} className="btn primary">
+                <Icon name="send" size={16} />
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
           </div>
         )}
       </section>
@@ -204,7 +271,7 @@ export function IngestChat({
           <div className="stack" style={{ gap: 8 }}>
             {draft.map((p, i) => (
               <div key={i} className="draft-item">
-                <div className="dt">{p.name ?? "(unnamed)"}</div>
+                <div className="dt">{[p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)"}</div>
                 <div className="dmeta">
                   {p.type} · {p.listingType} · {vnd(p.priceVnd)}
                   {p.priceBasis === "per_m2" && "/m²"}
@@ -215,6 +282,7 @@ export function IngestChat({
                 <div className="dsub">
                   {p.dealStatus} · conf {(p.confidence * 100).toFixed(0)}%
                   {p.locationText && ` · ${p.locationText}`}
+                  {p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
                 </div>
                 {missingFields(p).length > 0 ? (
                   <div className="draft-flag needs">

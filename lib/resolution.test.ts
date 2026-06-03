@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { score } from "./resolution";
+import { cleanProjectName, displayName, score } from "./resolution";
 import type { PropertyExtraction } from "./extraction/schema";
 
 function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
@@ -49,4 +49,24 @@ test("score: area outside 10% band does not count", () => {
 test("score: missing candidate name yields name similarity 0", () => {
   const s = score(ex(), { name: null, type: "apartment", attributes: null });
   assert.equal(s, 0.1); // only type matches
+});
+
+test("cleanProjectName: moves category prefixes out of canonical identity", () => {
+  assert.equal(cleanProjectName("nhà phố ABC"), "ABC");
+  assert.equal(cleanProjectName("ABC"), "ABC");
+});
+
+test("displayName: uses project -> building -> house hierarchy", () => {
+  assert.equal(
+    displayName(ex({ projectName: "ABC", buildingName: "Block A", houseNumber: "Căn 1", name: "nhà phố ABC" })),
+    "ABC / Block A / Căn 1",
+  );
+});
+
+test("score: prefixed project alias matches canonical project hierarchy", () => {
+  const s = score(
+    ex({ name: "nhà phố ABC", projectName: "nhà phố ABC", houseNumber: "Căn 1", type: "house" }),
+    { name: "ABC / Căn 1", projectName: "ABC", houseNumber: "Căn 1", type: "house", attributes: { areaM2: 75 } },
+  );
+  assert.ok(s >= 0.8, `expected auto-link score, got ${s}`);
 });
