@@ -1,8 +1,10 @@
-import { segmentStats, type Segment } from "../../lib/analytics";
+import { loadAnalytics, parseFilters, typeLabel, type AnalyticsData, type Segment } from "../../lib/analytics";
 import { Icon } from "../_components/icon";
 import { DatabaseError } from "../_components/notice";
 import { describeError } from "../../lib/page-error";
 import { MIN_SAMPLE } from "../../lib/stats";
+import { FilterBar } from "./analytics-filters";
+import { LineChart, RankedBars, Columns, Histogram, type LineSeries } from "../_components/analytics-charts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,10 +17,46 @@ const DEAL_COLOR: Record<string, string> = {
   unknown: "var(--ink-3)",
 };
 
-function listingLabel(value: string) {
-  if (value === "sale") return "Sale";
-  if (value === "rent") return "Rent";
-  return value;
+const TYPE_ICON: Record<string, string> = {
+  apartment: "building-2",
+  house: "home",
+  villa: "building",
+  land: "layers",
+  project: "building",
+  unknown: "home",
+};
+
+function Kpi({
+  icon,
+  label,
+  value,
+  unit,
+  sub,
+  accent,
+  warn,
+}: {
+  icon: string;
+  label: string;
+  value: React.ReactNode;
+  unit?: string;
+  sub?: React.ReactNode;
+  accent?: boolean;
+  warn?: boolean;
+}) {
+  const warnStyle = warn ? { color: "var(--warning)" } : undefined;
+  return (
+    <div className={`kpi ${accent ? "accent" : ""}`}>
+      <div className="kpi-top" style={warnStyle}>
+        <Icon name={icon} size={16} />
+        <span className="kpi-lbl">{label}</span>
+      </div>
+      <div className="kpi-val" style={warnStyle}>
+        {value}
+        {unit && <span className="unit">{unit}</span>}
+      </div>
+      {sub && <div className="kpi-sub">{sub}</div>}
+    </div>
+  );
 }
 
 function IqrRow({ segment, axis }: { segment: Segment; axis: { lo: number; hi: number } }) {
@@ -55,8 +93,9 @@ function IqrRow({ segment, axis }: { segment: Segment; axis: { lo: number; hi: n
   );
 }
 
-function AnalyticsGroup({ listingType, segments }: { listingType: string; segments: Segment[] }) {
+function AnalyticsGroup({ propertyType, segments }: { propertyType: string; segments: Segment[] }) {
   const numeric = segments.filter((s) => s.dist.min != null && s.dist.max != null);
+  if (numeric.length === 0) return null;
   const lo = Math.min(...numeric.map((s) => s.dist.min!));
   const hi = Math.max(...numeric.map((s) => s.dist.max!));
   const pad = (hi - lo || hi || 1) * 0.06;
@@ -66,142 +105,265 @@ function AnalyticsGroup({ listingType, segments }: { listingType: string; segmen
     <div className="analytics-group">
       <div className="ag-head">
         <div className="ag-title">
-          <span className="pico"><Icon name={listingType === "rent" ? "home" : "building-2"} size={17} /></span>
-          {listingLabel(listingType)}
+          <span className="pico" style={{ background: "var(--sunken)", color: "var(--clay)" }}>
+            <Icon name={TYPE_ICON[propertyType] ?? "building"} size={17} />
+          </span>
+          {typeLabel(propertyType)}
         </div>
         <span className="muted">{segments.reduce((sum, s) => sum + s.dist.n, 0)} observations</span>
       </div>
       <div className="iqr-axis">
-        {ticks.map((t, i) => <span key={i}>{m(Math.round(t))}</span>)}
+        {ticks.map((t, i) => (
+          <span key={i}>{m(Math.round(t))}</span>
+        ))}
       </div>
       <div className="iqr-chart">
-        {segments.map((s) => <IqrRow key={`${s.listingType}|${s.dealStatus}`} segment={s} axis={axis} />)}
+        {segments.map((s) => (
+          <IqrRow key={`${s.propertyType}|${s.dealStatus}`} segment={s} axis={axis} />
+        ))}
       </div>
     </div>
   );
 }
 
-export default async function AnalyticsPage() {
-  let segments: Segment[] = [];
+function Delta({ pct }: { pct: number }) {
+  const dir = pct > 0.2 ? "up" : pct < -0.2 ? "down" : "flat";
+  return (
+    <span className={`delta ${dir}`}>
+      <Icon name={pct >= 0 ? "arrow-up" : "arrow-down"} size={13} />
+      {Math.abs(pct).toFixed(1)}%
+    </span>
+  );
+}
+
+function Overview({ data }: { data: AnalyticsData }) {
+  const order = ["apartment", "house", "villa", "land", "project", "unknown"];
+  const present = Array.from(new Set(data.segments.map((s) => s.propertyType)));
+  const types = order.filter((t) => present.includes(t));
+  return (
+    <>
+      <div className="kpi-grid section" style={{ marginTop: 4 }}>
+        <Kpi accent icon="database" label="Observations" value={data.totalObs} sub={`across ${data.segments.length} segments`} />
+        <Kpi
+          icon="git-merge"
+          label="Avg discount"
+          value={data.avgDiscountPct == null ? "—" : `-${data.avgDiscountPct.toFixed(1)}`}
+          unit={data.avgDiscountPct == null ? undefined : "%"}
+          sub="asking → closed, all types"
+        />
+        <Kpi icon="layers" label="Types" value={types.length} sub={types.map(typeLabel).join(" · ") || "—"} />
+        <Kpi icon="triangle-alert" label="Underpowered" value={data.underpowered} warn={data.underpowered > 0} sub={`segments n < ${MIN_SAMPLE}`} />
+      </div>
+
+      {data.underpowered > 0 && (
+        <div className="notice section" style={{ marginTop: 18 }}>
+          <Icon name="triangle-alert" size={17} />
+          <span>
+            {data.underpowered} segment{data.underpowered === 1 ? "" : "s"} with n &lt; {MIN_SAMPLE} — shown dimmed and treated as
+            underpowered. Don&apos;t make decisions on them.
+          </span>
+        </div>
+      )}
+
+      <section className="section">
+        <div className="section-head">
+          <h2>IQR comparison by segment</h2>
+          <span className="muted">asking vs closed · never mixes types</span>
+        </div>
+        <div className="legend-bar" style={{ marginBottom: 16 }}>
+          <span className="lb">
+            <span className="swatch" style={{ background: "var(--asking)", opacity: 0.3, boxShadow: "inset 0 0 0 1.5px var(--asking)" }} />
+            asking
+          </span>
+          <span className="lb">
+            <span className="swatch" style={{ background: "var(--transacted)", opacity: 0.3, boxShadow: "inset 0 0 0 1.5px var(--transacted)" }} />
+            transacted
+          </span>
+          <span className="lb">
+            <span className="medline" />
+            median
+          </span>
+          <span className="lb" style={{ color: "var(--ink-3)" }}>
+            box = p25–p75 · whisker = min–max
+          </span>
+        </div>
+        <div className="stack" style={{ gap: 14 }}>
+          {types.map((t) => (
+            <AnalyticsGroup key={t} propertyType={t} segments={data.segments.filter((s) => s.propertyType === t)} />
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Market activity</h2>
+          <span className="muted">observations / month · all types</span>
+        </div>
+        <div className="card chart-card">
+          <Columns data={data.activity} color="var(--clay)" />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function DeepDive({ data }: { data: AnalyticsData }) {
+  const f = data.filters;
+  const tLabel = typeLabel(f.type);
+  const lastAsking = [...data.trend].reverse().find((p) => p.asking != null)?.asking ?? null;
+  const lastTransacted = [...data.trend].reverse().find((p) => p.transacted != null)?.transacted ?? null;
+  const headline = f.deal === "transacted" ? lastTransacted : lastAsking;
+
+  const series: LineSeries[] = [];
+  if (f.deal !== "transacted") series.push({ name: "Asking", color: "var(--asking)", points: data.trend.map((p) => p.asking), fill: true });
+  if (f.deal !== "asking")
+    series.push({ name: "Transacted", color: "var(--transacted)", points: data.trend.map((p) => p.transacted), fill: f.deal === "transacted" });
+
+  const hasTrend = data.trend.some((p) => p.asking != null || p.transacted != null);
+
+  return (
+    <>
+      <div className="kpi-grid section" style={{ marginTop: 4 }}>
+        <Kpi
+          accent
+          icon="coins"
+          label={`Median /m² · ${f.deal === "transacted" ? "closed" : "asking"}`}
+          value={m(headline)}
+          sub={
+            data.trendPct == null ? (
+              <span>over {f.period} months</span>
+            ) : (
+              <span>
+                <Delta pct={data.trendPct} /> over {f.period} months
+              </span>
+            )
+          }
+        />
+        <Kpi
+          icon="git-merge"
+          label="Closing discount"
+          value={data.discountPct == null ? "—" : `-${data.discountPct.toFixed(1)}`}
+          unit={data.discountPct == null ? undefined : "%"}
+          sub="asking → transacted median"
+        />
+        <Kpi icon="database" label="Observations" value={data.totalObs} sub={`in the last ${f.period} months`} />
+        <Kpi icon="map-pin" label="Areas" value={data.districts.length} sub={`${tLabel.toLowerCase()} · ${f.project === "all" ? "all projects" : f.project}`} />
+      </div>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Price /m² over time — {tLabel}</h2>
+          <span className="muted">{f.period} months</span>
+        </div>
+        <div className="card chart-card">
+          {hasTrend ? (
+            <>
+              <LineChart series={series} xLabels={data.trend.map((p) => p.label)} />
+              <div className="legend-bar" style={{ marginTop: 10 }}>
+                {series.map((s, i) => (
+                  <span key={i} className="lb">
+                    <span className="medline" style={{ background: s.color, width: 14, height: 3 }} />
+                    {s.name}
+                  </span>
+                ))}
+                {f.deal === "all" && (
+                  <span className="lb" style={{ color: "var(--ink-3)" }}>
+                    gap between lines = negotiation discount
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="empty">No priced observations in this window.</div>
+          )}
+        </div>
+      </section>
+
+      <div className="chart-2col section">
+        <div className="card chart-card">
+          <div className="cc-head">
+            <h3>Median by area</h3>
+            <span className="muted mono">{tLabel}</span>
+          </div>
+          {data.districts.length === 0 ? (
+            <div className="empty">No located observations yet.</div>
+          ) : (
+            <RankedBars rows={data.districts} />
+          )}
+        </div>
+        <div className="card chart-card">
+          <div className="cc-head">
+            <h3>Price /m² distribution</h3>
+            <span className="muted mono">dark bar = median</span>
+          </div>
+          {data.histogram ? (
+            <>
+              <Histogram dist={data.histogram} />
+              <p className="muted" style={{ margin: "8px 2px 0", fontSize: 12 }}>
+                Observations per price band (million ₫/m²).
+              </p>
+            </>
+          ) : (
+            <div className="empty">Not enough priced observations to plot a distribution.</div>
+          )}
+        </div>
+      </div>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Market activity</h2>
+          <span className="muted">observations / month</span>
+        </div>
+        <div className="card chart-card">
+          <Columns data={data.activity} />
+        </div>
+      </section>
+    </>
+  );
+}
+
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const filters = parseFilters(await searchParams);
+
+  let data: AnalyticsData | null = null;
   let error: string | null = null;
   try {
-    segments = await segmentStats();
+    data = await loadAnalytics(filters);
   } catch (e) {
     error = describeError(e, "analytics");
   }
 
-  const underpowered = segments.filter((s) => s.underpowered).length;
-  const totalObs = segments.reduce((sum, s) => sum + s.dist.n, 0);
-  const askingObs = segments.filter((s) => s.dealStatus === "asking").reduce((sum, s) => sum + s.dist.n, 0);
-  const transactedObs = segments.filter((s) => s.dealStatus === "transacted").reduce((sum, s) => sum + s.dist.n, 0);
-  const listingTypes = Array.from(new Set(segments.map((s) => s.listingType)));
-
   return (
     <main>
       <header className="page-head">
-        <div className="eyebrow">Analytics</div>
-        <h1>Analytics</h1>
+        <div className="eyebrow">
+          <Icon name="trending-up" size={13} /> Analytics
+        </div>
+        <h1>Market analytics</h1>
         <p>
-          Price/m² distributions, segmented by listing type and deal status — never mixed. Segments with
-          n &lt; 5 are flagged as underpowered.
+          Price/m² distributions and trends, split by type and deal status — never mixed. Pick a type for an apples-to-apples
+          deep-dive; small samples are always flagged.
         </p>
       </header>
 
       {error ? (
         <DatabaseError detail={error} />
-      ) : segments.length === 0 ? (
-        <div className="empty">No resolved observations with a price/m² yet.</div>
-      ) : (
-        <div className="stack" style={{ gap: 16 }}>
-          <div className="kpi-grid">
-            <div className="kpi accent">
-              <div className="kpi-top"><Icon name="database" size={16} /><span className="kpi-lbl">Observations</span></div>
-              <div className="kpi-val">{totalObs}</div>
-              <div className="kpi-sub">across {segments.length} segments</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-top"><Icon name="building" size={16} /><span className="kpi-lbl">Listing types</span></div>
-              <div className="kpi-val">{listingTypes.length}</div>
-              <div className="kpi-sub">{listingTypes.map(listingLabel).join(" · ")}</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-top"><Icon name="git-merge" size={16} /><span className="kpi-lbl">Asking vs closed</span></div>
-              <div className="kpi-val">{askingObs}<span className="unit">/ {transactedObs}</span></div>
-              <div className="kpi-sub">asking / transacted observations</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-top" style={{ color: underpowered ? "var(--warning)" : "var(--ink-3)" }}>
-                <Icon name="triangle-alert" size={16} /><span className="kpi-lbl">Underpowered</span>
-              </div>
-              <div className="kpi-val" style={{ color: underpowered ? "var(--warning)" : "var(--ink)" }}>{underpowered}</div>
-              <div className="kpi-sub">segments with n &lt; {MIN_SAMPLE}</div>
-            </div>
-          </div>
-
-          {underpowered > 0 && (
-            <div className="notice">
-              <Icon name="triangle-alert" size={17} />
-              <span>
-                {underpowered} segment{underpowered === 1 ? "" : "s"} with n &lt; 5 — shown dimmed and
-                treated as underpowered.
-              </span>
-            </div>
+      ) : data ? (
+        <div className="stack" style={{ gap: 18 }}>
+          <FilterBar filters={data.filters} options={data.options} />
+          {data.totalObs === 0 ? (
+            <div className="empty">No resolved observations with a price/m² match these filters yet.</div>
+          ) : data.mode === "overview" ? (
+            <Overview data={data} />
+          ) : (
+            <DeepDive data={data} />
           )}
-
-          <section className="section" style={{ marginTop: 6 }}>
-            <div className="section-head">
-              <h2>IQR comparison by segment</h2>
-              <span className="muted">box = p25–p75 · whisker = min–max · line = median</span>
-            </div>
-            <div className="legend-bar">
-              <span className="lb"><span className="swatch" style={{ background: "var(--asking)", opacity: 0.3, boxShadow: "inset 0 0 0 1.5px var(--asking)" }} />asking</span>
-              <span className="lb"><span className="swatch" style={{ background: "var(--transacted)", opacity: 0.3, boxShadow: "inset 0 0 0 1.5px var(--transacted)" }} />transacted</span>
-              <span className="lb"><span className="medline" />median</span>
-            </div>
-            <div className="stack" style={{ gap: 14 }}>
-              {listingTypes.map((listingType) => (
-                <AnalyticsGroup
-                  key={listingType}
-                  listingType={listingType}
-                  segments={segments.filter((s) => s.listingType === listingType)}
-                />
-              ))}
-            </div>
-          </section>
-
-          <div className="card table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th className="l">Listing</th>
-                  <th className="l">Deal</th>
-                  <th>n</th>
-                  <th>median /m²</th>
-                  <th>p25</th>
-                  <th>p75</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((s) => (
-                  <tr key={`${s.listingType}|${s.dealStatus}`} className={s.underpowered ? "under" : undefined}>
-                    <td className="l seg">{s.listingType}</td>
-                    <td className="l seg">
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        {s.dealStatus}
-                        {s.underpowered && <Icon name="triangle-alert" size={13} style={{ color: "var(--warning)" }} />}
-                      </span>
-                    </td>
-                    <td>{s.dist.n}</td>
-                    <td>{m(s.dist.median)}</td>
-                    <td>{m(s.dist.p25)}</td>
-                    <td>{m(s.dist.p75)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </div>
-      )}
+      ) : null}
     </main>
   );
 }
