@@ -98,6 +98,12 @@ export function IngestChat({
         const data = await res.json().catch(() => ({}));
         throw new Error(typeof data.error === "string" ? data.error : "turn failed");
       }
+      if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+        // A 200 that isn't an event stream means we were redirected away (e.g.
+        // to the sign-in page after the session lapsed). Surface it instead of
+        // silently leaving the assistant bubble stuck on the typing indicator.
+        throw new Error("Your session may have expired — please refresh and sign in again.");
+      }
 
       let lastReply = "";
       let committedTurn = false;

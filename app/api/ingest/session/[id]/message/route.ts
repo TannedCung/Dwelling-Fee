@@ -27,6 +27,12 @@ export const POST = route<{ params: Promise<{ id: string }> }>(
       async start(controller) {
         const send = (event: unknown) =>
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        // Flush immediately, before the first model token (which can be several
+        // seconds away). This opens the connection and stops proxies/CDNs from
+        // buffering the response until enough bytes accumulate — the cause of
+        // "typing dots, then the whole reply at once". The padding crosses any
+        // byte-threshold buffers; SSE comment lines (":") are ignored by clients.
+        controller.enqueue(encoder.encode(`:${" ".repeat(2048)}\n\n: open\n\n`));
         try {
           for await (const event of streamTurn(id, content)) {
             if (event.type === "error") log.error("turn failed mid-stream", undefined, { sessionId: id, detail: event.error });
@@ -45,10 +51,12 @@ export const POST = route<{ params: Promise<{ id: string }> }>(
     return new Response(stream, {
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
+        // no-transform stops Vercel/CDN compression from buffering the body.
         "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        // Disable proxy buffering so events flush immediately.
+        // Disable nginx-style proxy buffering so events flush immediately.
         "x-accel-buffering": "no",
+        // NB: no `Connection` header — it's a forbidden hop-by-hop header on
+        // HTTP/2 (how Vercel serves browsers) and can break the response.
       },
     });
   },
