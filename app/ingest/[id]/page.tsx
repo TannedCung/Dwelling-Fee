@@ -1,10 +1,9 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getSession } from "../../../lib/ingest";
+import { getSession, listSessions, type SessionListItem } from "../../../lib/ingest";
 import { IngestChat } from "./ingest-chat";
-import { Icon } from "../../_components/icon";
 import { DatabaseError } from "../../_components/notice";
 import { describeError } from "../../../lib/page-error";
+import { SessionsRail } from "../sessions-rail";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,31 +11,29 @@ export const runtime = "nodejs";
 export default async function IngestSessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   let session;
+  let sessions: SessionListItem[] = [];
   try {
     session = await getSession(id);
+    sessions = await listSessions();
   } catch (e) {
     return <DatabaseError detail={describeError(e, "ingest.session")} />;
   }
   if (!session) notFound();
 
   return (
-    <main>
-      <Link href="/" className="back-link" style={{ marginBottom: 16 }}>
-        <Icon name="arrow-left" size={15} /> Sessions
-      </Link>
-      <header className="page-head">
-        <div className="eyebrow">Ingest session</div>
-        <h1>{session.title ?? "New ingest session"}</h1>
-        <p>
-          {session.sourceType} · {session.status}
-          {session.status !== "open" && " — this session is closed (read-only)."}
-        </p>
-      </header>
-
+    <main className="ingest-workspace rail-open">
+      <SessionsRail sessions={sessions} activeId={session.id} />
       <IngestChat
         sessionId={session.id}
         status={session.status}
-        initialMessages={session.messages.map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }))}
+        sourceType={session.sourceType}
+        title={session.title}
+        initialMessages={session.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments,
+          createdAt: m.createdAt.toISOString(),
+        }))}
         initialDraft={session.draft}
       />
     </main>

@@ -1,0 +1,5 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Dwelling Fee mark">
+  <path d="M24 5.5c1.6 0 3.1.62 4.25 1.72l13.1 12.6c1.05 1.0 1.65 2.4 1.65 3.86V37.5c0 2.76-2.24 5-5 5H10c-2.76 0-5-2.24-5-5V23.68c0-1.46.6-2.86 1.65-3.86l13.1-12.6A6.13 6.13 0 0 1 24 5.5Z" fill="#8A5F41"></path>
+  <circle cx="24" cy="22.5" r="6.5" fill="#CCD67F"></circle>
+  <path d="M19 42.5V35.5c0-2.76 2.24-5 5-5s5 2.24 5 5v7" fill="#F3E4C9"></path>
+</svg>

@@ -17,6 +17,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   attachments?: ChatAttachment[];
+  createdAt?: string;
 }
 
 type TurnEvent =
@@ -24,7 +25,6 @@ type TurnEvent =
   | { type: "done"; result: { reply: string; draft: PropertyExtraction[]; readyToCommit: boolean } }
   | { type: "error"; error: string };
 
-/** Read a `text/event-stream` body and yield each parsed `data:` JSON payload. */
 async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<TurnEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -55,23 +55,33 @@ interface CommitSummary {
   needsReview: number;
 }
 
-const vnd = (n: number | null) =>
-  n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n) + " ₫";
-
 const EXAMPLES = [
   "Căn 2PN Eco Green, 71m², chào 4.8 tỷ, block HR2",
   "Nhà phố ABC, 1 trệt 2 lầu, đã chốt 9.2 tỷ",
   "Ảnh bảng giá dự án: trích căn, tầng, diện tích và giá",
 ];
 
+const vnd = (n: number | null) =>
+  n == null ? "—" : new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(n) + " ₫";
+
+const timeLabel = (value?: string) =>
+  value ? new Date(value).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
+
+const dayLabel = (value?: string) =>
+  value ? new Date(value).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "today";
+
 export function IngestChat({
   sessionId,
   status,
+  sourceType,
+  title,
   initialMessages,
   initialDraft,
 }: {
   sessionId: string;
   status: "open" | "committed" | "abandoned";
+  sourceType: string;
+  title: string | null;
   initialMessages: ChatMessage[];
   initialDraft: PropertyExtraction[];
 }) {
@@ -85,33 +95,36 @@ export function IngestChat({
   const [committed, setCommitted] = useState(status === "committed");
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const { notify } = useToast();
-  const endRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(
-    () => endRef.current?.scrollIntoView({ behavior: "smooth" }),
-    [messages, sending, streamingReply],
-  );
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [messages, sending, streamingReply]);
 
+  const closed = committed || status === "abandoned";
   const ready = draftReady(draft);
   const incompleteCount = draft.filter((p) => missingFields(p).length > 0).length;
   const completeCount = Math.max(0, draft.length - incompleteCount);
   const progress = draft.length === 0 ? 0 : Math.round((completeCount / draft.length) * 100);
+  const userMessageCount = messages.filter((m) => m.role === "user").length;
 
   async function send() {
     const content = input.trim();
     const images = selectedImages;
     if ((!content && images.length === 0) || sending) return;
+    const createdAt = new Date().toISOString();
     setInput("");
     setSelectedImages([]);
     if (fileRef.current) fileRef.current.value = "";
     setMessages((m) => [...m, {
       role: "user",
       content,
+      createdAt,
       attachments: images.map((file) => ({ filename: file.name, contentType: file.type, size: file.size })),
     }]);
     setSending(true);
-    setStreamingReply(""); // show the assistant bubble immediately, fill as it streams
+    setStreamingReply("");
     try {
       const body = new FormData();
       body.set("content", content);
@@ -123,14 +136,10 @@ export function IngestChat({
           : { headers: { "content-type": "application/json" }, body: JSON.stringify({ content }) }),
       });
       if (!res.ok || !res.body) {
-        // Pre-stream error: server replied with JSON, not an event stream.
         const data = await res.json().catch(() => ({}));
         throw new Error(typeof data.error === "string" ? data.error : "turn failed");
       }
       if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
-        // A 200 that isn't an event stream means we were redirected away (e.g.
-        // to the sign-in page after the session lapsed). Surface it instead of
-        // silently leaving the assistant bubble stuck on the typing indicator.
         throw new Error("Your session may have expired — please refresh and sign in again.");
       }
 
@@ -142,16 +151,15 @@ export function IngestChat({
           setStreamingReply(event.reply);
         } else if (event.type === "done") {
           committedTurn = true;
-          setMessages((m) => [...m, { role: "assistant", content: event.result.reply }]);
+          setMessages((m) => [...m, { role: "assistant", content: event.result.reply, createdAt: new Date().toISOString() }]);
           setDraft(event.result.draft);
           setStreamingReply(null);
         } else if (event.type === "error") {
           throw new Error(event.error);
         }
       }
-      // Stream ended without a `done` (e.g. dropped connection) — keep what we have.
       if (!committedTurn) {
-        if (lastReply) setMessages((m) => [...m, { role: "assistant", content: lastReply }]);
+        if (lastReply) setMessages((m) => [...m, { role: "assistant", content: lastReply, createdAt: new Date().toISOString() }]);
         setStreamingReply(null);
       }
     } catch (e) {
@@ -172,9 +180,6 @@ export function IngestChat({
       setSummary(data);
       setCommitted(true);
       notify({ type: "success", message: `Committed — ${data.observationsCreated} observation(s) saved.` });
-      // Don't router.refresh() here: it would remount this component and wipe the
-      // just-computed summary. The session is now read-only and the panel below is
-      // self-sufficient; the sessions list re-fetches when the user navigates back.
     } catch (e) {
       notify({ type: "error", message: e instanceof Error ? e.message : "Commit failed." });
     } finally {
@@ -184,58 +189,124 @@ export function IngestChat({
 
   return (
     <div className="chat-grid">
-      {/* Conversation */}
-      <section className="stack" style={{ minWidth: 0 }}>
-        <div className="chat-log">
-          {messages.map((m, i) => (
-            <div key={i} className={`bubble ${m.role}`}>
-              {m.content || (m.attachments?.length ? "Image attachment" : "")}
-              {m.attachments && m.attachments.length > 0 && (
-                <div className="attachment-list">
-                  {m.attachments.map((a, j) => (
-                    <a key={j} href={a.url} target="_blank" rel="noreferrer" className="attachment-chip">
-                      <Icon name="image" size={13} />
-                      {a.filename}
-                    </a>
-                  ))}
-                </div>
-              )}
+      <section className="chat-panel">
+        <div className="chat-topbar">
+          <div className="icon-btn" aria-hidden="true">
+            <Icon name="panel-left" size={18} />
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="ct-title">
+              <Icon name="file-text" size={16} style={{ color: "var(--clay)" }} />
+              {title ?? "New ingest session"}
             </div>
-          ))}
-          {streamingReply !== null && (
-            <div className="bubble assistant" aria-live="polite" data-testid="streaming-bubble">
-              {streamingReply || <span className="typing-dots"><span /><span /><span /></span>}
+            <div className="ct-meta">
+              <span>{sourceType}</span><span className="sep" />
+              <span>{userMessageCount} message{userMessageCount === 1 ? "" : "s"}</span><span className="sep" />
+              <span>{draft.length} propert{draft.length === 1 ? "y" : "ies"} in draft</span>
             </div>
-          )}
-          <div ref={endRef} />
+          </div>
+          <span className={`badge ${committed ? "committed" : status}`}>
+            <span className="dot" style={{ background: "currentColor" }} />
+            {committed ? "committed" : status}
+          </span>
         </div>
 
-        {!committed && (
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="filter-chips">
+        <div className="chat-log" ref={logRef}>
+          {messages.length === 0 ? (
+            <div className="chat-empty">
+              <div className="ce-mark">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logo-mark.svg" alt="" />
+              </div>
+              <h3>Start a collection session</h3>
+              <p>Paste a broker message, listing, or screenshot. The assistant will extract observations and keep a structured draft here.</p>
+            </div>
+          ) : (
+            <div className="day-sep">{dayLabel(messages[0]?.createdAt)}</div>
+          )}
+
+          {messages.map((m, i) => (
+            <div key={i} className={`msg ${m.role}`}>
+              <div className="avatar">
+                {m.role === "assistant" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src="/logo-mark.svg" alt="" />
+                ) : "You"}
+              </div>
+              <div className="bubble-wrap">
+                <div className={`bubble ${m.role}`}>
+                  {m.content || (m.attachments?.length ? "Image attachment" : "")}
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="attachment-list">
+                      {m.attachments.map((a, j) => (
+                        <a key={j} href={a.url} target="_blank" rel="noreferrer" className="attachment-chip">
+                          <Icon name="image" size={13} />
+                          {a.filename}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {m.role === "assistant" && draft.length > 0 && i === messages.length - 1 && (
+                    <span className="extracted-line"><Icon name="sparkles" size={13} />draft updated</span>
+                  )}
+                </div>
+                <span className="time">{timeLabel(m.createdAt)}</span>
+              </div>
+            </div>
+          ))}
+
+          {streamingReply !== null && (
+            <div className="msg assistant" aria-live="polite" data-testid="streaming-bubble">
+              <div className="avatar">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logo-mark.svg" alt="" />
+              </div>
+              <div className="bubble-wrap">
+                <div className="bubble assistant">
+                  {streamingReply || <span className="typing-dots"><span /><span /><span /></span>}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {closed ? (
+          <div className="composer-locked">
+            <Icon name={committed ? "check-circle" : "x"} size={15} />
+            {committed ? "Session committed — read only." : "Session abandoned — read only."}
+          </div>
+        ) : (
+          <div className="composer">
+            <div className="examples">
+              <span className="lbl">Examples:</span>
               {EXAMPLES.map((example) => (
-                <button
-                  key={example}
-                  type="button"
-                  className="fchip"
-                  onClick={() => setInput(example)}
-                  disabled={sending}
-                >
-                  <Icon name="sparkles" size={14} className="fc-ico" />
+                <button key={example} type="button" className="ex-chip" title={example} onClick={() => setInput(example)} disabled={sending}>
+                  <Icon name="plus" size={12} />
                   {example}
                 </button>
               ))}
             </div>
-            <textarea
-              className="input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-              }}
-              placeholder="Paste a broker message, or refine the draft… (⌘/Ctrl+Enter to send)"
-              rows={3}
-            />
+            <div className="composer-field">
+              <textarea
+                className="input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+                }}
+                placeholder="Paste a broker message, or refine the draft..."
+                rows={2}
+              />
+              <button
+                type="button"
+                className="composer-send"
+                onClick={send}
+                disabled={sending || (input.trim().length === 0 && selectedImages.length === 0)}
+                aria-label="Send"
+              >
+                <Icon name="send" size={17} />
+              </button>
+            </div>
             {selectedImages.length > 0 && (
               <div className="attachment-list composer">
                 {selectedImages.map((file, i) => (
@@ -252,131 +323,128 @@ export function IngestChat({
                 ))}
               </div>
             )}
+            <div className="hint">
+              <span>Raw text and images are preserved as provenance.</span>
+              <span><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => setSelectedImages(Array.from(e.currentTarget.files ?? []))}
+            />
             <div className="composer-actions">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => setSelectedImages(Array.from(e.currentTarget.files ?? []))}
-              />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                disabled={sending}
-                className="btn secondary"
-                title="Attach images"
-              >
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={sending} className="btn secondary sm">
                 <Icon name="image" size={16} />
                 Images
               </button>
-              <button onClick={send} disabled={sending || (input.trim().length === 0 && selectedImages.length === 0)} className="btn primary">
-                <Icon name="send" size={16} />
-                {sending ? "Sending…" : "Send"}
-              </button>
+              <span className="muted">Attach screenshots or bảng giá as a list.</span>
             </div>
           </div>
         )}
       </section>
 
-      {/* Draft panel */}
-      <aside className="card draft-panel">
-        <div className="card-row" style={{ alignItems: "baseline" }}>
-          <strong className="card-title" style={{ fontSize: 15 }}>Draft</strong>
-          <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
-        </div>
-
-        <div className="draft-progress">
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
+      <aside className="draft-panel">
+        <div className="draft-card">
+          <div className="draft-head">
+            <div className="dh-top">
+              <strong>Draft</strong>
+              <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="progress-label">
+              <span>{completeCount}/{draft.length || 0} complete</span>
+              <span className={ready ? "ok" : undefined}>
+                {ready ? <><Icon name="check-circle" size={13} />ready to commit</> : "needs required fields"}
+              </span>
+            </div>
           </div>
-          <div className="progress-label">
-            <span>{completeCount}/{draft.length || 0} complete</span>
-            <span>{ready ? "ready to commit" : "needs required fields"}</span>
-          </div>
-        </div>
 
-        {draft.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>Nothing yet. Paste a message to start.</p>
-        ) : (
-          <div className="draft-items">
-            {draft.map((p, i) => {
-              const missing = missingFields(p);
-              const title = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
-              return (
-                <div key={i} className="draft-item">
-                  <div className="di-top">
-                    <div className="di-ico">
-                      <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="dt">{title}</div>
-                      <div className="dsub">
-                        {p.locationText || "No location text"}{p.tags.length > 0 && ` · ${p.tags.join(", ")}`}
+          {draft.length === 0 ? (
+            <p className="muted" style={{ margin: "0 16px 16px" }}>Nothing yet. Paste a message to start.</p>
+          ) : (
+            <div className="draft-items">
+              {draft.map((p, i) => {
+                const missing = missingFields(p);
+                const itemTitle = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
+                return (
+                  <div key={i} className="draft-item">
+                    <div className="di-top">
+                      <div className="di-ico">
+                        <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div className="di-name">{itemTitle}</div>
+                        <div className="di-loc"><Icon name="map-pin" size={12} />{p.locationText || "No location text"}</div>
                       </div>
                     </div>
-                  </div>
-                  <div className="di-fields">
-                    <span className="di-field">{p.type}</span>
-                    <span className="di-field">{p.listingType}</span>
-                    <span className="di-field">{p.dealStatus}</span>
-                    <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
-                      {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
-                    </span>
-                    <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
-                    {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
-                    {p.isNegotiable && <span className="di-field">negotiable</span>}
-                  </div>
-                  <div className="di-conf">
-                    <span>conf {(p.confidence * 100).toFixed(0)}%</span>
-                    <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
-                  </div>
-                  {missing.length > 0 ? (
-                    <div className="draft-flag needs">
-                      <Icon name="triangle-alert" size={13} /> needs: {missing.join(", ")}
+                    <div className="di-fields">
+                      <span className="di-field">{p.type}</span>
+                      <span className="di-field">{p.listingType}</span>
+                      <span className="di-field">{p.dealStatus}</span>
+                      <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
+                        {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
+                      </span>
+                      <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
+                      {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
+                      {p.isNegotiable && <span className="di-field">negotiable</span>}
                     </div>
-                  ) : (
-                    <div className="draft-flag ok">
-                      <Icon name="check-circle" size={13} /> complete
+                    <div className="di-conf">
+                      <span>conf</span>
+                      <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
+                      <span>{(p.confidence * 100).toFixed(0)}%</span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {committed ? (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="form-msg ok" style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="check-circle" size={16} /> Committed
+                    {missing.length > 0 ? (
+                      <div className="di-flag needs"><Icon name="triangle-alert" size={13} />needs: {missing.join(", ")}</div>
+                    ) : (
+                      <div className="di-flag ok"><Icon name="check-circle" size={13} />complete</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {summary && (
-              <div className="muted">
-                {summary.observationsCreated} obs · {summary.autoLinked} linked · {summary.created} new · {summary.needsReview} to review
+          )}
+
+          <div className="commit-zone">
+            {committed ? (
+              <div className="commit-summary">
+                <div className="cs-head"><Icon name="check-circle" size={18} />Committed</div>
+                {summary && (
+                  <div className="cs-grid">
+                    <div className="cs-stat"><b>{summary.observationsCreated}</b><span>observations</span></div>
+                    <div className="cs-stat"><b>{summary.autoLinked}</b><span>auto-linked</span></div>
+                    <div className="cs-stat"><b>{summary.created}</b><span>created</span></div>
+                    <div className="cs-stat"><b>{summary.needsReview}</b><span>to review</span></div>
+                  </div>
+                )}
+                <a href="/properties" className="btn secondary block">View properties</a>
               </div>
+            ) : status === "abandoned" ? (
+              <span className="muted" style={{ textAlign: "center", fontSize: 13 }}>Session abandoned — draft cannot be committed.</span>
+            ) : (
+              <>
+                <button
+                  onClick={commit}
+                  disabled={committing || !ready}
+                  title={ready ? "" : "Fill in the required fields first"}
+                  className="btn secondary block"
+                >
+                  <Icon name="git-merge" size={16} />
+                  {committing ? "Committing..." : "Commit draft"}
+                </button>
+                {!ready && draft.length > 0 && (
+                  <span className="form-msg err" style={{ fontSize: 12, textAlign: "center" }}>
+                    {incompleteCount} propert{incompleteCount === 1 ? "y" : "ies"} still missing required info.
+                  </span>
+                )}
+              </>
             )}
-            <a href="/properties" className="form-msg">View properties →</a>
-            <a href="/" className="form-msg">Back to sessions</a>
           </div>
-        ) : (
-          <div className="stack" style={{ gap: 6 }}>
-            <button
-              onClick={commit}
-              disabled={committing || !ready}
-              title={ready ? "" : "Fill in the required fields first"}
-              className="btn secondary"
-            >
-              {committing ? "Committing…" : "Commit draft"}
-            </button>
-            {!ready && draft.length > 0 && (
-              <span className="form-msg err" style={{ fontSize: 12 }}>
-                {incompleteCount} propert{incompleteCount === 1 ? "y" : "ies"} still missing required info.
-              </span>
-            )}
-          </div>
-        )}
+        </div>
       </aside>
     </div>
   );

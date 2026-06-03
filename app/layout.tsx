@@ -10,6 +10,11 @@ import { logger } from "../lib/log";
 export const metadata = {
   title: "Dwelling Fee — Housing Price Intelligence",
   description: "Collect, structure, and analyze fragmented housing price signals.",
+  icons: {
+    icon: "/logo-mark.svg",
+    shortcut: "/logo-mark.svg",
+    apple: "/logo-mark.svg",
+  },
 };
 
 export const dynamic = "force-dynamic";

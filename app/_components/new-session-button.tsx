@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 import { Icon } from "./icon";
 import { useToast } from "./toast";
 
-export function NewSessionButton() {
+export function NewSessionButton({
+  className = "btn primary",
+  label = "New ingest session",
+  pendingLabel = "Starting…",
+}: {
+  className?: string;
+  label?: string;
+  pendingLabel?: string;
+}) {
   const [pending, start] = useTransition();
   const { notify } = useToast();
   const router = useRouter();
@@ -27,9 +35,9 @@ export function NewSessionButton() {
   }
 
   return (
-    <button onClick={create} disabled={pending} className="btn primary">
+    <button onClick={create} disabled={pending} className={className}>
       <Icon name="plus" size={16} />
-      {pending ? "Starting…" : "New ingest session"}
+      {pending ? pendingLabel : label}
     </button>
   );
 }
