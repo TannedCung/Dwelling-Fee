@@ -26,6 +26,11 @@ interface DraftTurnShape {
 function emptyProperty(): PropertyExtraction {
   return {
     name: null,
+    projectName: null,
+    buildingName: null,
+    houseNumber: null,
+    aliases: [],
+    tags: [],
     type: "unknown",
     listingType: "unknown",
     priceVnd: null,

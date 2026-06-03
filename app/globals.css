@@ -109,7 +109,7 @@ a:hover { color: var(--cocoa-deep); text-decoration: underline; }
 button { font-family: inherit; }
 
 /* ---- App shell ------------------------------------------------------- */
-.app { max-width: 880px; margin: 0 auto; padding: 28px 22px 80px; }
+.app { width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px clamp(22px, 4vw, 56px) 80px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 30px; }
 .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
 .brand:hover { text-decoration: none; }
@@ -138,6 +138,8 @@ button { font-family: inherit; }
 .section > h2 { font: var(--text-h3); color: var(--ink); margin: 0 0 13px; }
 .muted { color: var(--ink-3); font: var(--text-body-sm); }
 .stack { display: grid; gap: 12px; }
+/* Responsive card grid — fills the full shell width, wrapping into columns. */
+.card-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); align-items: start; }
 
 /* ---- Cards (borderless, soft lift) ----------------------------------- */
 .card { background: var(--surface); border-radius: var(--r-lg); padding: 16px 18px; box-shadow: var(--shadow-sm), var(--ring-inset); }

@@ -49,7 +49,7 @@ export default async function ReviewPage() {
           Nothing to review — the queue is clear.
         </div>
       ) : (
-        <div className="stack" style={{ gap: 14 }}>
+        <div className="card-grid">
           {items.map((it) => (
             <div key={it.observationId} className="card review-item">
               <p className="raw">{it.rawText}</p>

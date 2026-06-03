@@ -43,7 +43,7 @@ export default async function Home() {
         ) : sessions.length === 0 ? (
           <div className="empty">No sessions yet — start one above.</div>
         ) : (
-          <div className="stack">
+          <div className="card-grid">
             {sessions.map((s) => (
               <Link key={s.id} href={`/ingest/${s.id}`} className="card interactive">
                 <div className="card-row">

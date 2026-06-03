@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { transaction } from "../../db/client";
 import { rawSignal, ingestSession } from "../../db/schema";
-import { getSession, userSourceText, addMessage } from "./session";
+import { getSession, userSourceText, userAttachments, addMessage } from "./session";
 import { persistDraft, type PersistResult } from "./persist";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 
@@ -27,7 +27,10 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
     throw new Error(`Cannot commit — missing required info:\n${incompleteSummary(session.draft).join("\n")}`);
   }
 
-  const text = (await userSourceText(sessionId)) || `(ingest session ${sessionId})`;
+  const attachments = await userAttachments(sessionId);
+  const textOnly = await userSourceText(sessionId);
+  const attachmentText = attachments.map((a) => `[image: ${a.filename}] ${a.url}`).join("\n");
+  const text = [textOnly, attachmentText].filter(Boolean).join("\n\n") || `(ingest session ${sessionId})`;
   const contentHash = createHash("sha256").update(text.trim()).digest("hex");
 
   // Signal + observations + session close + audit message are one atomic unit: a
@@ -39,6 +42,7 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
         sourceType: session.sourceType,
         contentHash,
         rawText: text,
+        attachments: attachments.length > 0 ? attachments : null,
         ingestSessionId: sessionId,
         status: "extracted",
       })

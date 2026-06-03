@@ -79,6 +79,14 @@ export const property = pgTable(
     name: text("name"),
     // Diacritic-stripped, lowercased name used as a blocking key for entity resolution (§5).
     nameNormalized: text("name_normalized"),
+    projectName: text("project_name"),
+    projectNameNormalized: text("project_name_normalized"),
+    buildingName: text("building_name"),
+    buildingNameNormalized: text("building_name_normalized"),
+    houseNumber: text("house_number"),
+    houseNumberNormalized: text("house_number_normalized"),
+    aliases: jsonb("aliases"), // observed names/spellings that resolve to this canonical property
+    tags: jsonb("tags"), // reusable categories/subtypes shared with observations
     type: propertyType("type").default("unknown").notNull(),
     locationId: uuid("location_id").references(() => location.id),
     geom: pointGeometry("geom"),
@@ -95,6 +103,10 @@ export const property = pgTable(
   (t) => [
     index("property_geom_idx").using("gist", t.geom),
     index("property_name_norm_idx").on(t.nameNormalized),
+    index("property_project_name_norm_idx").on(t.projectNameNormalized),
+    index("property_building_name_norm_idx").on(t.buildingNameNormalized),
+    index("property_house_number_norm_idx").on(t.houseNumberNormalized),
+    index("property_tags_idx").using("gin", t.tags),
   ],
 );
 
@@ -120,6 +132,7 @@ export const priceObservation = pgTable(
     observedAt: timestamp("observed_at", { withTimezone: true }),
     confidence: numeric("confidence"),
     needsReview: boolean("needs_review").default(false).notNull(),
+    tags: jsonb("tags"), // observed category/context tags consolidated with property tags
     extracted: jsonb("extracted"), // full extraction payload
     extractor: text("extractor"), // model + prompt version, for reproducibility
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -127,6 +140,7 @@ export const priceObservation = pgTable(
   (t) => [
     index("obs_property_time_idx").on(t.propertyId, t.observedAt),
     index("obs_segment_time_idx").on(t.dealStatus, t.listingType, t.observedAt),
+    index("obs_tags_idx").using("gin", t.tags),
   ],
 );
 
@@ -234,6 +248,7 @@ export const ingestMessage = pgTable(
     sessionId: uuid("session_id").references(() => ingestSession.id).notNull(),
     role: ingestRole("role").notNull(),
     content: text("content").notNull(),
+    attachments: jsonb("attachments"), // uploaded image metadata/URLs for this turn
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("ingest_message_session_idx").on(t.sessionId, t.createdAt)],

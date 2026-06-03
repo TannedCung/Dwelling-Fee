@@ -1,8 +1,8 @@
-import { and, isNull, or, ilike } from "drizzle-orm";
+import { and, isNull, or, ilike, type SQL } from "drizzle-orm";
 import { getDb, type DbExecutor } from "../db/client";
 import { property } from "../db/schema";
 import type { PropertyExtraction } from "./extraction/schema";
-import { normalizeName, tokens, jaccard } from "./text";
+import { normalizeName, tokens, jaccard, splitNameTags, uniqueText } from "./text";
 
 /**
  * Deterministic entity resolution (design §5). Phase 1 uses blocking + weighted
@@ -17,6 +17,9 @@ const REVIEW_MIN = 0.45; // plausible but uncertain → human review queue
 export interface Candidate {
   id: string;
   name: string | null;
+  projectName: string | null;
+  buildingName: string | null;
+  houseNumber: string | null;
   type: string;
   addressText: string | null;
   score: number;
@@ -27,11 +30,25 @@ export type Resolution =
   | { action: "review"; candidates: Candidate[] }
   | { action: "create"; candidates: Candidate[] };
 
-/** Combined match score: name similarity dominates, type + area band refine it. */
-export function score(extraction: PropertyExtraction, cand: { name: string | null; type: string; attributes: unknown }): number {
-  const exTokens = tokens(normalizeName(extraction.name ?? ""));
-  const candTokens = tokens(normalizeName(cand.name ?? ""));
-  const nameSim = jaccard(exTokens, candTokens);
+/**
+ * Combined match score: hierarchy dominates when present, while legacy flat
+ * names remain useful as fallback for existing data.
+ */
+export function score(
+  extraction: PropertyExtraction,
+  cand: {
+    name: string | null;
+    projectName?: string | null;
+    buildingName?: string | null;
+    houseNumber?: string | null;
+    type: string;
+    attributes: unknown;
+  },
+): number {
+  const projectSim = textSim(cleanProjectName(extraction.projectName ?? extraction.name), cand.projectName ?? cand.name);
+  const buildingSim = textSim(extraction.buildingName, cand.buildingName);
+  const houseSim = textSim(extraction.houseNumber, cand.houseNumber);
+  const nameSim = textSim(displayName(extraction), cand.name);
 
   const typeMatch = extraction.type !== "unknown" && extraction.type === cand.type ? 1 : 0;
 
@@ -41,19 +58,41 @@ export function score(extraction: PropertyExtraction, cand: { name: string | nul
     areaMatch = Math.abs(extraction.areaM2 - candArea) / candArea <= 0.1 ? 1 : 0;
   }
 
-  return 0.6 * nameSim + 0.25 * typeMatch + 0.15 * areaMatch;
+  // Unit labels like "Căn 1" are meaningful only with a project/building/location.
+  const hasHierarchy = Boolean(extraction.projectName || extraction.buildingName || cand.projectName || cand.buildingName);
+  const identityScore = hasHierarchy
+    ? 0.42 * projectSim + 0.22 * buildingSim + 0.18 * houseSim + 0.08 * nameSim
+    : 0.72 * nameSim;
+
+  return identityScore + 0.1 * typeMatch + 0.1 * areaMatch;
 }
 
 /** Find candidate canonical properties for an extraction, ranked by score. */
 export async function findCandidates(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<Candidate[]> {
-  const blockingTokens = tokens(normalizeName(extraction.name ?? extraction.locationText ?? ""));
+  const blockingTokens = uniqueText([
+    ...tokens(normalizeName(cleanProjectName(extraction.projectName ?? extraction.name) ?? "")),
+    ...tokens(normalizeName(extraction.buildingName ?? "")),
+    ...tokens(normalizeName(extraction.houseNumber ?? "")),
+    ...tokens(normalizeName(extraction.locationText ?? "")),
+  ]);
   if (blockingTokens.length === 0) return [];
 
   // Block on shared tokens (substring of the normalized name) to avoid scanning everything.
+  const clauses: SQL[] = [];
+  for (const t of blockingTokens) {
+    clauses.push(ilike(property.nameNormalized, `%${t}%`));
+    clauses.push(ilike(property.projectNameNormalized, `%${t}%`));
+    clauses.push(ilike(property.buildingNameNormalized, `%${t}%`));
+    clauses.push(ilike(property.houseNumberNormalized, `%${t}%`));
+  }
+
   const rows = await db
     .select({
       id: property.id,
       name: property.name,
+      projectName: property.projectName,
+      buildingName: property.buildingName,
+      houseNumber: property.houseNumber,
       type: property.type,
       addressText: property.addressText,
       attributes: property.attributes,
@@ -62,7 +101,7 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
     .where(
       and(
         isNull(property.canonicalPropertyId), // only canonical records
-        or(...blockingTokens.map((t) => ilike(property.nameNormalized, `%${t}%`))),
+        or(...clauses),
       ),
     )
     .limit(50);
@@ -71,6 +110,9 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
     .map((r) => ({
       id: r.id,
       name: r.name,
+      projectName: r.projectName,
+      buildingName: r.buildingName,
+      houseNumber: r.houseNumber,
       type: r.type,
       addressText: r.addressText,
       score: score(extraction, r),
@@ -91,18 +133,63 @@ export async function resolve(extraction: PropertyExtraction, db: DbExecutor = g
 
 /** Create a canonical property from an extraction. Returns the new id. */
 export async function createPropertyFromExtraction(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<string> {
-  const name = extraction.name?.trim() || null;
+  const name = displayName(extraction);
+  const projectName = cleanProjectName(extraction.projectName ?? null);
+  const tags = uniqueText([
+    ...extraction.tags,
+    ...splitNameTags(extraction.name).tags,
+    ...splitNameTags(extraction.projectName).tags,
+  ]);
+  const aliases = uniqueText([
+    extraction.name,
+    extraction.projectName,
+    ...extraction.aliases,
+  ]).filter((alias) => normalizeName(alias) !== normalizeName(name ?? ""));
   const [row] = await db
     .insert(property)
     .values({
       name,
       nameNormalized: name ? normalizeName(name) : null,
+      projectName,
+      projectNameNormalized: projectName ? normalizeName(projectName) : null,
+      buildingName: extraction.buildingName?.trim() || null,
+      buildingNameNormalized: extraction.buildingName ? normalizeName(extraction.buildingName) : null,
+      houseNumber: extraction.houseNumber?.trim() || null,
+      houseNumberNormalized: extraction.houseNumber ? normalizeName(extraction.houseNumber) : null,
+      aliases: aliases.length > 0 ? aliases : null,
+      tags: tags.length > 0 ? tags : null,
       type: extraction.type,
       addressText: extraction.locationText ?? null,
       attributes: extraction.areaM2 != null || extraction.bedrooms != null
-        ? { areaM2: extraction.areaM2, bedrooms: extraction.bedrooms }
+        ? { areaM2: extraction.areaM2, bedrooms: extraction.bedrooms, tags }
         : null,
     })
     .returning({ id: property.id });
   return row!.id;
+}
+
+export function displayName(extraction: PropertyExtraction): string | null {
+  const projectName = cleanProjectName(extraction.projectName ?? null);
+  const hierarchy = uniqueText([projectName, extraction.buildingName, extraction.houseNumber]);
+  if (hierarchy.length > 0) return hierarchy.join(" / ");
+
+  const cleaned = cleanProjectName(extraction.name);
+  if (cleaned && !isGenericUnitName(cleaned)) return cleaned;
+  return extraction.locationText?.trim() || cleaned || null;
+}
+
+export function cleanProjectName(raw: string | null | undefined): string | null {
+  return splitNameTags(raw).name;
+}
+
+function textSim(a: string | null | undefined, b: string | null | undefined): number {
+  const aNorm = normalizeName(a ?? "");
+  const bNorm = normalizeName(b ?? "");
+  if (!aNorm || !bNorm) return 0;
+  if (aNorm === bNorm) return 1;
+  return jaccard(tokens(aNorm), tokens(bNorm));
+}
+
+function isGenericUnitName(value: string): boolean {
+  return /^(?:căn|can|unit|apartment|apt|nhà|nha|lô|lo|lot)\s*[\w.-]+$/iu.test(value.trim());
 }

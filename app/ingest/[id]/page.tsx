@@ -36,7 +36,7 @@ export default async function IngestSessionPage({ params }: { params: Promise<{ 
       <IngestChat
         sessionId={session.id}
         status={session.status}
-        initialMessages={session.messages.map((m) => ({ role: m.role, content: m.content }))}
+        initialMessages={session.messages.map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }))}
         initialDraft={session.draft}
       />
     </main>

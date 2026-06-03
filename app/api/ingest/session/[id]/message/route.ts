@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { streamTurn } from "../../../../../../lib/ingest";
-import { route, parseBody } from "../../../../../../lib/api/respond";
+import { badRequest, route, parseBody } from "../../../../../../lib/api/respond";
+import { uploadImageFiles, type Attachment } from "../../../../../../lib/storage/r2";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(
   "ingest.session.message",
   async (req, ctx, log) => {
     const { id } = await ctx.params;
-    const { content } = await parseBody(req, Body); // throws 400 on bad body (pre-stream)
+    const { content, attachments } = await parseMessageRequest(req);
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -34,7 +35,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(
         // byte-threshold buffers; SSE comment lines (":") are ignored by clients.
         controller.enqueue(encoder.encode(`:${" ".repeat(2048)}\n\n: open\n\n`));
         try {
-          for await (const event of streamTurn(id, content)) {
+          for await (const event of streamTurn(id, content, attachments)) {
             if (event.type === "error") log.error("turn failed mid-stream", undefined, { sessionId: id, detail: event.error });
             send(event);
           }
@@ -61,3 +62,17 @@ export const POST = route<{ params: Promise<{ id: string }> }>(
     });
   },
 );
+
+async function parseMessageRequest(req: Request): Promise<{ content: string; attachments: Attachment[] }> {
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await req.formData();
+    const content = String(form.get("content") ?? "").trim();
+    const files = form.getAll("images").filter((v): v is File => v instanceof File);
+    if (!content && files.length === 0) throw badRequest("content or at least one image is required");
+    return { content, attachments: await uploadImageFiles(files) };
+  }
+
+  const { content } = await parseBody(req, Body); // throws 400 on bad body (pre-stream)
+  return { content, attachments: [] };
+}

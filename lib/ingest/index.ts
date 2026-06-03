@@ -4,6 +4,7 @@ import { getDb, transaction } from "../../db/client";
 import { rawSignal } from "../../db/schema";
 import { extract } from "../extraction/extract";
 import { persistDraft } from "./persist";
+import type { Attachment } from "../storage/r2";
 
 export * from "./session";
 export * from "./agent";
@@ -28,10 +29,13 @@ export async function ingestSignal(input: {
   rawText: string;
   sourceType?: "broker" | "web" | "agent" | "user";
   sourceRef?: string | null;
+  attachments?: Attachment[];
 }): Promise<IngestResult> {
   const source = input.sourceType ?? "broker";
   const sourceRef = input.sourceRef ?? null;
-  const contentHash = createHash("sha256").update(input.rawText.trim()).digest("hex");
+  const attachments = input.attachments ?? [];
+  const hashText = [input.rawText.trim(), ...attachments.map((a) => `${a.key}:${a.url}`)].join("\n");
+  const contentHash = createHash("sha256").update(hashText).digest("hex");
   const empty = { duplicate: true as const, observationsCreated: 0, autoLinked: 0, created: 0, needsReview: 0 };
 
   // Cheap dedup check first — also avoids paying for extraction on a known signal.
@@ -48,13 +52,19 @@ export async function ingestSignal(input: {
 
   // Extraction is the slow/expensive step — run it OUTSIDE the transaction so we
   // never hold a pooled DB connection open across an LLM call.
-  const { properties } = await extract(input.rawText);
+  const { properties } = await extract(input.rawText, attachments);
 
   // Signal insert + observations + status update are atomic.
   return transaction(async (tx) => {
     const inserted = await tx
       .insert(rawSignal)
-      .values({ sourceType: source, sourceRef, contentHash, rawText: input.rawText })
+      .values({
+        sourceType: source,
+        sourceRef,
+        contentHash,
+        rawText: input.rawText || attachments.map((a) => `[image: ${a.filename}] ${a.url}`).join("\n"),
+        attachments: attachments.length > 0 ? attachments : null,
+      })
       .onConflictDoNothing({ target: [rawSignal.sourceType, rawSignal.sourceRef, rawSignal.contentHash] })
       .returning({ id: rawSignal.id });
 
