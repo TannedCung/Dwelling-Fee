@@ -30,7 +30,7 @@ const HttpConfig = z
 const CreateBody = z.object({
   label: z.string().min(1, "label is required"),
   url: z.string().url("a valid url is required"),
-  kind: z.enum(["stub", "http"]).optional(),
+  kind: z.literal("http").optional(),
   config: HttpConfig.optional(),
 });
 
@@ -43,7 +43,7 @@ export const GET = route("collect.sources.list", async () => {
 export const POST = route("collect.sources.create", async (req, _ctx, log) => {
   const body = await parseBody(req, CreateBody);
   const id = await createSource(body);
-  log.info("collection source created", { sourceId: id, kind: body.kind ?? "stub" });
+  log.info("collection source created", { sourceId: id, kind: body.kind ?? "http" });
   return NextResponse.json({ id }, { status: 201 });
 });
 

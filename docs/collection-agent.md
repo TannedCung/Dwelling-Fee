@@ -24,8 +24,7 @@ The repo already has a Phase 3 collection scaffold:
 - `collection_source` and `collection_run` tables track sources and run history.
 - `lib/collection/run.ts` calls a source fetcher and sends each item to
   `ingestSignal()`.
-- `lib/collection/fetchers.ts` has a deterministic `stub` fetcher and a guarded
-  `http` fetcher.
+- `lib/collection/fetchers.ts` has a guarded `http` fetcher.
 - `/collect` lets an authenticated user add sources, run them, and inspect recent
   run counts.
 

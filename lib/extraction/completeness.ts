@@ -49,7 +49,7 @@ export function incompleteSummary(properties: PropertyExtraction[]): string[] {
     .map((x) => `#${x.i + 1} ${identityLabel(x.p)}: needs ${x.miss.join(", ")}`);
 }
 
-function hasIdentity(p: PropertyExtraction): boolean {
+export function hasIdentity(p: PropertyExtraction): boolean {
   if (p.projectName || p.name || p.locationText) return true;
   // Unit-only labels like "Căn 1" are not enough unless there is a surrounding
   // location/address context that makes them resolvable.

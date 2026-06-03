@@ -33,14 +33,14 @@ export async function getSource(id: string) {
 export async function createSource(input: {
   label: string;
   url: string;
-  kind?: CollectionKind;
+  kind?: "http";
   config?: unknown;
 }): Promise<string> {
   await ensureCollectionSchema();
   const db = getDb();
   const [row] = await db
     .insert(collectionSource)
-    .values({ label: input.label, url: input.url, kind: input.kind ?? "stub", config: input.config ?? null })
+    .values({ label: input.label, url: input.url, kind: input.kind ?? "http", config: input.config ?? null })
     .returning({ id: collectionSource.id });
   return row!.id;
 }

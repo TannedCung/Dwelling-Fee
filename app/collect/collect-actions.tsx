@@ -146,7 +146,6 @@ export function EnableToggle({ id, enabled }: { id: string; enabled: boolean }) 
 export function AddSourceForm() {
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
-  const [kind, setKind] = useState<"stub" | "http">("stub");
   const [maxPages, setMaxPages] = useState(1);
   const [maxDepth, setMaxDepth] = useState(1);
   const [maxConcurrency, setMaxConcurrency] = useState(2);
@@ -168,26 +167,22 @@ export function AddSourceForm() {
         body: JSON.stringify({
           label,
           url,
-          kind,
-          config:
-            kind === "http"
-              ? {
-                  maxPages,
-                  maxDepth,
-                  maxConcurrency,
-                  followLinks,
-                  useSitemaps,
-                  itemSelector: itemSelector || undefined,
-                  contentSelector: contentSelector || undefined,
-                }
-              : undefined,
+          kind: "http",
+          config: {
+            maxPages,
+            maxDepth,
+            maxConcurrency,
+            followLinks,
+            useSitemaps,
+            itemSelector: itemSelector || undefined,
+            contentSelector: contentSelector || undefined,
+          },
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "failed");
       setLabel("");
       setUrl("");
-      setKind("stub");
       setMaxPages(1);
       setMaxDepth(1);
       setMaxConcurrency(2);
@@ -207,10 +202,6 @@ export function AddSourceForm() {
   return (
     <form onSubmit={submit} className="stack" style={{ gap: 10 }}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <select className="input" style={{ flex: "0 0 130px" }} value={kind} onChange={(e) => setKind(e.target.value as "stub" | "http")}>
-          <option value="stub">Stub</option>
-          <option value="http">HTTP</option>
-        </select>
         <input
           className="input"
           style={{ flex: "1 1 180px" }}
@@ -227,72 +218,68 @@ export function AddSourceForm() {
           onChange={(e) => setUrl(e.target.value)}
           required
         />
-        {kind === "http" && (
-          <>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={10}
-              style={{ flex: "0 0 110px" }}
-              title="Max pages"
-              value={maxPages}
-              onChange={(e) => setMaxPages(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
-            />
-            <input
-              className="input"
-              type="number"
-              min={0}
-              max={5}
-              style={{ flex: "0 0 110px" }}
-              title="Max depth"
-              value={maxDepth}
-              onChange={(e) => setMaxDepth(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-            />
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={5}
-              style={{ flex: "0 0 110px" }}
-              title="Concurrency"
-              value={maxConcurrency}
-              onChange={(e) => setMaxConcurrency(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
-            />
-            <label className="chip" style={{ cursor: "pointer", height: 38 }}>
-              <input
-                type="checkbox"
-                checked={followLinks}
-                onChange={(e) => setFollowLinks(e.target.checked)}
-                style={{ marginRight: 6 }}
-              />
-              follow links
-            </label>
-            <label className="chip" style={{ cursor: "pointer", height: 38 }}>
-              <input
-                type="checkbox"
-                checked={useSitemaps}
-                onChange={(e) => setUseSitemaps(e.target.checked)}
-                style={{ marginRight: 6 }}
-              />
-              sitemaps
-            </label>
-            <input
-              className="input"
-              style={{ flex: "1 1 180px" }}
-              placeholder="Item selector (optional)"
-              value={itemSelector}
-              onChange={(e) => setItemSelector(e.target.value)}
-            />
-            <input
-              className="input"
-              style={{ flex: "1 1 180px" }}
-              placeholder="Content selector (optional)"
-              value={contentSelector}
-              onChange={(e) => setContentSelector(e.target.value)}
-            />
-          </>
-        )}
+        <input
+          className="input"
+          type="number"
+          min={1}
+          max={10}
+          style={{ flex: "0 0 110px" }}
+          title="Max pages"
+          value={maxPages}
+          onChange={(e) => setMaxPages(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+        />
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={5}
+          style={{ flex: "0 0 110px" }}
+          title="Max depth"
+          value={maxDepth}
+          onChange={(e) => setMaxDepth(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
+        />
+        <input
+          className="input"
+          type="number"
+          min={1}
+          max={5}
+          style={{ flex: "0 0 110px" }}
+          title="Concurrency"
+          value={maxConcurrency}
+          onChange={(e) => setMaxConcurrency(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
+        />
+        <label className="chip" style={{ cursor: "pointer", height: 38 }}>
+          <input
+            type="checkbox"
+            checked={followLinks}
+            onChange={(e) => setFollowLinks(e.target.checked)}
+            style={{ marginRight: 6 }}
+          />
+          follow links
+        </label>
+        <label className="chip" style={{ cursor: "pointer", height: 38 }}>
+          <input
+            type="checkbox"
+            checked={useSitemaps}
+            onChange={(e) => setUseSitemaps(e.target.checked)}
+            style={{ marginRight: 6 }}
+          />
+          sitemaps
+        </label>
+        <input
+          className="input"
+          style={{ flex: "1 1 180px" }}
+          placeholder="Item selector (optional)"
+          value={itemSelector}
+          onChange={(e) => setItemSelector(e.target.value)}
+        />
+        <input
+          className="input"
+          style={{ flex: "1 1 180px" }}
+          placeholder="Content selector (optional)"
+          value={contentSelector}
+          onChange={(e) => setContentSelector(e.target.value)}
+        />
         <button className="btn primary" disabled={busy || !label || !url}>
           <Icon name="plus" size={15} />
           {busy ? "Adding…" : "Add source"}

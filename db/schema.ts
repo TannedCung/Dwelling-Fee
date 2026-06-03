@@ -194,7 +194,7 @@ export const collectionSource = pgTable("collection_source", {
   id: uuid("id").primaryKey().defaultRandom(),
   label: text("label").notNull(),
   url: text("url").notNull(),
-  kind: collectionKind("kind").default("stub").notNull(), // which fetcher to use
+  kind: collectionKind("kind").default("http").notNull(), // legacy "stub" rows are crawled with HTTP
   enabled: boolean("enabled").default(true).notNull(),
   config: jsonb("config"), // fetcher-specific options (selectors, query params, ...)
   lastRunAt: timestamp("last_run_at", { withTimezone: true }),

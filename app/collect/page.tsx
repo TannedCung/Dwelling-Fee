@@ -21,7 +21,6 @@ const when = (d: Date | null) => (d ? new Date(d).toLocaleString() : "—");
 
 function sourceConfigSummary(source: SourceView) {
   const config = source.config && typeof source.config === "object" && !Array.isArray(source.config) ? source.config as Record<string, unknown> : {};
-  if (source.kind === "stub") return "deterministic sample data";
   const parts = [
     `${typeof config.maxPages === "number" ? config.maxPages : 10} max pages`,
     `${typeof config.maxDepth === "number" ? config.maxDepth : 1} depth`,
@@ -54,8 +53,8 @@ export default async function CollectPage() {
         <p>
           Registered internet sources. A scheduled job (and the buttons below) fetch listings and feed
           them through the same extract → resolve → review pipeline as broker messages. Re-runs are
-          idempotent — already-seen items are deduplicated. Use <strong>stub</strong> sources for
-          pipeline tests and <strong>HTTP</strong> sources for guarded public-page collection.
+          idempotent — already-seen items are deduplicated. Sources crawl guarded public pages over
+          HTTP and respect robots.txt, source-domain limits, and unchanged-page caching.
         </p>
       </header>
 
@@ -80,7 +79,7 @@ export default async function CollectPage() {
                     <div className="card-row">
                       <span className="card-title">{s.label}</span>
                       <div style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-                        <span className="chip">{s.kind}</span>
+                        <span className="chip">http</span>
                         <StatusBadge status={s.lastStatus} />
                       </div>
                     </div>

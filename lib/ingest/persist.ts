@@ -3,6 +3,7 @@ import { priceObservation } from "../../db/schema";
 import { resolve, createPropertyFromExtraction } from "../resolution";
 import type { PropertyExtraction } from "../extraction/schema";
 import { EXTRACTOR_VERSION } from "../extraction/extract";
+import { hasIdentity } from "../extraction/completeness";
 
 // Observations below this extractor confidence are quarantined for human review
 // and excluded from analytics until confirmed (design §2, §7).
@@ -39,7 +40,7 @@ export async function persistDraft(
 
   for (const p of properties) {
     let propertyId: string | null = null;
-    let review = p.confidence < REVIEW_CONFIDENCE_THRESHOLD;
+    let review = shouldReviewExtraction(p);
 
     if (!review) {
       const decision = await resolve(p, db);
@@ -71,6 +72,10 @@ export async function persistDraft(
 
   if (rows.length > 0) await db.insert(priceObservation).values(rows);
   return { observationsCreated: properties.length, autoLinked, created, needsReview };
+}
+
+export function shouldReviewExtraction(p: PropertyExtraction): boolean {
+  return p.confidence < REVIEW_CONFIDENCE_THRESHOLD || !hasIdentity(p);
 }
 
 export function derivePricePerM2(
