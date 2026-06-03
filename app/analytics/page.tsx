@@ -1,5 +1,7 @@
 import { segmentStats, type Segment } from "../../lib/analytics";
 import { Icon } from "../_components/icon";
+import { DatabaseError } from "../_components/notice";
+import { describeError } from "../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,7 +14,7 @@ export default async function AnalyticsPage() {
   try {
     segments = await segmentStats();
   } catch (e) {
-    error = e instanceof Error ? e.message : "database unavailable";
+    error = describeError(e, "analytics");
   }
 
   const underpowered = segments.filter((s) => s.underpowered).length;
@@ -29,7 +31,7 @@ export default async function AnalyticsPage() {
       </header>
 
       {error ? (
-        <div className="notice danger">Database not reachable ({error}).</div>
+        <DatabaseError detail={error} />
       ) : segments.length === 0 ? (
         <div className="empty">No resolved observations with a price/m² yet.</div>
       ) : (

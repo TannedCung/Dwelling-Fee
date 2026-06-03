@@ -4,6 +4,8 @@ import { getProperty } from "../../../lib/properties";
 import { PriceScatter } from "../../_components/price-scatter";
 import { MIN_SAMPLE } from "../../../lib/stats";
 import { Icon } from "../../_components/icon";
+import { DatabaseError } from "../../_components/notice";
+import { describeError } from "../../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,7 +18,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
   try {
     detail = await getProperty(id);
   } catch (e) {
-    return <div className="notice danger">Database not reachable ({e instanceof Error ? e.message : "error"}).</div>;
+    return <DatabaseError detail={describeError(e, "property.detail")} />;
   }
   if (!detail) notFound();
 

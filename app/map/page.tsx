@@ -1,6 +1,8 @@
 import { mapPoints, pendingGeocodeCount, type MapPoint } from "../../lib/geo/backfill";
 import { MapView } from "./map-view";
 import { GeocodeButton } from "./geocode-button";
+import { DatabaseError } from "../_components/notice";
+import { describeError } from "../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,7 +14,7 @@ export default async function MapPage() {
   try {
     [points, pending] = await Promise.all([mapPoints(), pendingGeocodeCount()]);
   } catch (e) {
-    error = e instanceof Error ? e.message : "database unavailable";
+    error = describeError(e, "map");
   }
 
   return (
@@ -27,7 +29,7 @@ export default async function MapPage() {
       </header>
 
       {error ? (
-        <div className="notice danger">Database not reachable ({error}).</div>
+        <DatabaseError detail={error} />
       ) : (
         <section className="section" style={{ marginTop: 0 }}>
           <div className="card-row" style={{ marginBottom: 12 }}>

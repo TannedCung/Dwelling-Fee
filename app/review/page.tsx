@@ -42,7 +42,7 @@ export default async function ReviewPage() {
       </header>
 
       {error ? (
-        <div className="notice danger">Database not reachable ({error}).</div>
+        <DatabaseError detail={error} />
       ) : items.length === 0 ? (
         <div className="empty">
           <Icon name="check-circle" size={30} />

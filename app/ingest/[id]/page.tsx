@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { getSession } from "../../../lib/ingest";
 import { IngestChat } from "./ingest-chat";
 import { Icon } from "../../_components/icon";
+import { DatabaseError } from "../../_components/notice";
+import { describeError } from "../../../lib/page-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,7 +15,7 @@ export default async function IngestSessionPage({ params }: { params: Promise<{ 
   try {
     session = await getSession(id);
   } catch (e) {
-    return <div className="notice danger">Database not reachable ({e instanceof Error ? e.message : "error"}).</div>;
+    return <DatabaseError detail={describeError(e, "ingest.session")} />;
   }
   if (!session) notFound();
 
