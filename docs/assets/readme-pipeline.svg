@@ -1,0 +1,83 @@
+<svg width="1280" height="420" viewBox="0 0 1280 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Dwelling Fee data pipeline</title>
+  <desc id="desc">Raw housing signals flow through extraction, normalization, entity resolution, review, storage, and analytics.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#382A1E" flood-opacity="0.12"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#382A1E" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#A77F60"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="420" rx="28" fill="#F4EADA"/>
+  <text x="54" y="58" fill="#382A1E" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="850">Provenance-first data pipeline</text>
+  <text x="54" y="86" fill="#6E5A48" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="600">Every source becomes an immutable raw signal before extraction, resolution, review, and analytics.</text>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif">
+    <g transform="translate(54 132)" filter="url(#shadow)">
+      <rect width="172" height="130" rx="18" fill="#FCF7EE"/>
+      <rect width="172" height="130" rx="18" stroke="#E4D3C2"/>
+      <circle cx="36" cy="36" r="16" fill="#F3E4C9"/>
+      <text x="62" y="41" fill="#382A1E" font-size="16" font-weight="850">Sources</text>
+      <text x="22" y="76" fill="#6E5A48" font-size="13" font-weight="650">Broker chat</text>
+      <text x="22" y="98" fill="#6E5A48" font-size="13" font-weight="650">Web listings</text>
+      <text x="22" y="120" fill="#6E5A48" font-size="13" font-weight="650">Screenshots / OCR</text>
+    </g>
+
+    <path d="M238 197H306" stroke="#A77F60" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(318 132)" filter="url(#shadow)">
+      <rect width="172" height="130" rx="18" fill="#FCF7EE"/>
+      <rect width="172" height="130" rx="18" stroke="#E4D3C2"/>
+      <circle cx="36" cy="36" r="16" fill="#E6EBC4"/>
+      <text x="62" y="41" fill="#382A1E" font-size="16" font-weight="850">Raw signal</text>
+      <text x="22" y="76" fill="#6E5A48" font-size="13" font-weight="650">Immutable text</text>
+      <text x="22" y="98" fill="#6E5A48" font-size="13" font-weight="650">Content hash</text>
+      <text x="22" y="120" fill="#6E5A48" font-size="13" font-weight="650">Source metadata</text>
+    </g>
+
+    <path d="M502 197H570" stroke="#A77F60" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(582 132)" filter="url(#shadow)">
+      <rect width="172" height="130" rx="18" fill="#FCF7EE"/>
+      <rect width="172" height="130" rx="18" stroke="#E4D3C2"/>
+      <circle cx="36" cy="36" r="16" fill="#EEE1CD"/>
+      <text x="62" y="41" fill="#382A1E" font-size="16" font-weight="850">Extract</text>
+      <text x="22" y="76" fill="#6E5A48" font-size="13" font-weight="650">LLM schema</text>
+      <text x="22" y="98" fill="#6E5A48" font-size="13" font-weight="650">Normalize VND/m2</text>
+      <text x="22" y="120" fill="#6E5A48" font-size="13" font-weight="650">Confidence gates</text>
+    </g>
+
+    <path d="M766 197H834" stroke="#A77F60" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(846 132)" filter="url(#shadow)">
+      <rect width="172" height="130" rx="18" fill="#FCF7EE"/>
+      <rect width="172" height="130" rx="18" stroke="#E4D3C2"/>
+      <circle cx="36" cy="36" r="16" fill="#F1D8CF"/>
+      <text x="62" y="41" fill="#382A1E" font-size="16" font-weight="850">Resolve</text>
+      <text x="22" y="76" fill="#6E5A48" font-size="13" font-weight="650">Blocking</text>
+      <text x="22" y="98" fill="#6E5A48" font-size="13" font-weight="650">Weighted score</text>
+      <text x="22" y="120" fill="#6E5A48" font-size="13" font-weight="650">Review if unsure</text>
+    </g>
+
+    <path d="M1030 197H1098" stroke="#A77F60" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(1110 132)" filter="url(#shadow)">
+      <rect width="116" height="130" rx="18" fill="#382A1E"/>
+      <circle cx="34" cy="36" r="16" fill="#CCD67F"/>
+      <text x="22" y="78" fill="#FBF3E6" font-size="16" font-weight="850">Analyze</text>
+      <text x="22" y="101" fill="#CDBBA8" font-size="13" font-weight="650">IQR</text>
+      <text x="22" y="122" fill="#CDBBA8" font-size="13" font-weight="650">Map</text>
+    </g>
+  </g>
+
+  <g transform="translate(162 310)" font-family="Inter, ui-sans-serif, system-ui, sans-serif">
+    <rect width="956" height="56" rx="18" fill="#FCF7EE"/>
+    <rect width="956" height="56" rx="18" stroke="#E4D3C2"/>
+    <circle cx="32" cy="28" r="8" fill="#76823A"/>
+    <text x="52" y="34" fill="#382A1E" font-size="14" font-weight="800">Quality loop:</text>
+    <text x="150" y="34" fill="#6E5A48" font-size="14" font-weight="650">phase0 extraction evals · human review queue · sample-size guards · append-only observations · source provenance</text>
+  </g>
+</svg>
