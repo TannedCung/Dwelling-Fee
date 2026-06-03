@@ -11,30 +11,24 @@ export const PropertyExtraction = z.object({
   name: z
     .string()
     .nullable()
-    .default(null)
     .describe("Human-readable display name for the full hierarchy; do not use only generic labels like 'Căn 1'."),
   projectName: z
     .string()
     .nullable()
-    .default(null)
     .describe("Root project/development/neighborhood name, e.g. 'ABC'. Strip category prefixes like 'nhà phố'."),
   buildingName: z
     .string()
     .nullable()
-    .default(null)
     .describe("Building/tower/block/phase within the project, e.g. 'Block A' or 'Tòa S1'."),
   houseNumber: z
     .string()
     .nullable()
-    .default(null)
     .describe("Unit/apartment/lot/house number, e.g. 'Căn 1', 'A1204', 'LK-12'."),
   aliases: z
     .array(z.string())
-    .default([])
     .describe("Observed spelling/name variants for the same property identity."),
   tags: z
     .array(z.string())
-    .default([])
     .describe("Reusable category/context tags such as 'nhà phố', 'shophouse', 'penthouse', or legal/layout notes."),
   type: z.enum(["apartment", "house", "project", "land", "unknown"]),
   listingType: z.enum(["sale", "rent", "unknown"]),
