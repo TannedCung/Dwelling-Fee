@@ -4,7 +4,7 @@ import { getExtractionModel } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { getSession, addMessage, updateDraft, type SessionView } from "./session";
-import type { Attachment } from "../storage/r2";
+import { attachmentImageData, type Attachment } from "../storage/r2";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -77,17 +77,18 @@ async function prepareTurn(sessionId: string, userContent: string, attachments: 
 
   await addMessage(sessionId, "user", userContent, attachments);
 
-  const transcript: ModelMessage[] = [
+  const turns = [
     ...before.messages,
     { role: "user" as const, content: userContent, attachments },
-  ].map((m) => toModelMessage(m.role, m.content, m.attachments));
+  ];
+  const messages = await Promise.all(turns.map((m) => toModelMessage(m.role, m.content, m.attachments)));
 
   const outstanding = incompleteSummary(before.draft);
   const system =
     `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
     (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "");
 
-  return { before, transcript, system };
+  return { before, transcript: messages, system };
 }
 
 /** Persist the model's result and apply the deterministic readiness gate. */
@@ -157,13 +158,28 @@ function deriveTitle(properties: PropertyExtraction[], fallback: string): string
   return (named ?? fallback).slice(0, 80);
 }
 
-function toModelMessage(role: "user" | "assistant", content: string, attachments: Attachment[] = []): ModelMessage {
+async function toModelMessage(role: "user" | "assistant", content: string, attachments: Attachment[] = []): Promise<ModelMessage> {
   if (role === "assistant" || attachments.length === 0) return { role, content };
+  const parts: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; image: Uint8Array; mediaType: string }
+  > = [{ type: "text", text: attachmentPromptText(content, attachments) }];
+
+  for (const attachment of attachments) {
+    const image = await attachmentImageData(attachment);
+    if (image) parts.push({ type: "image", image, mediaType: attachment.contentType });
+  }
+
   return {
     role: "user",
-    content: [
-      { type: "text", text: content || "Extract real-estate listing details from the attached image(s)." },
-      ...attachments.map((a) => ({ type: "image" as const, image: new URL(a.url), mediaType: a.contentType })),
-    ],
+    content: parts,
   };
+}
+
+function attachmentPromptText(content: string, attachments: Attachment[]): string {
+  const text = content || "Extract real-estate listing details from the attached image(s).";
+  const metadata = attachments
+    .map((a, i) => `Image ${i + 1}: ${a.filename}, ${a.contentType}, ${a.size} bytes, R2 key ${a.key}`)
+    .join("\n");
+  return `${text}\n\nAttached image metadata:\n${metadata}`;
 }

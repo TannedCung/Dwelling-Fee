@@ -4,7 +4,7 @@ import { getDb, transaction } from "../../db/client";
 import { rawSignal } from "../../db/schema";
 import { extract } from "../extraction/extract";
 import { persistDraft } from "./persist";
-import type { Attachment } from "../storage/r2";
+import { persistableAttachments, type Attachment } from "../storage/r2";
 
 export * from "./session";
 export * from "./agent";
@@ -64,7 +64,7 @@ export async function ingestSignal(input: {
         sourceRef,
         contentHash,
         rawText: input.rawText || attachments.map((a) => `[image: ${a.filename}] ${a.url}`).join("\n"),
-        attachments: attachments.length > 0 ? attachments : null,
+        attachments: attachments.length > 0 ? persistableAttachments(attachments) : null,
         capturedAt: input.capturedAt ?? null,
       })
       .onConflictDoNothing({ target: [rawSignal.sourceType, rawSignal.sourceRef, rawSignal.contentHash] })

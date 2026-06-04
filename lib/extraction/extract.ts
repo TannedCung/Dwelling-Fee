@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import { getExtractionModel, EXTRACTOR_VERSION } from "../ai/registry";
 import { ExtractionResult } from "./schema";
-import type { Attachment } from "../storage/r2";
+import { attachmentImageData, type Attachment } from "../storage/r2";
 
 // Re-exported so callers keep importing the extractor surface from one place.
 export { EXTRACTOR_VERSION };
@@ -40,21 +40,38 @@ Rules:
  * the response against the zod schema, so a malformed model reply throws here.
  */
 export async function extract(rawText: string, attachments: Attachment[] = []): Promise<ExtractionResult> {
+  const content = await extractionMessageContent(rawText, attachments);
   const { object } = await generateObject({
     model: getExtractionModel(),
     schema: ExtractionResult,
     system: SYSTEM_PROMPT,
     messages: [{
       role: "user",
-      content: attachments.length > 0
-        ? [
-          { type: "text", text: rawText || "Extract real-estate listing details from the attached image(s)." },
-          ...attachments.map((a) => ({ type: "image" as const, image: new URL(a.url), mediaType: a.contentType })),
-        ]
-        : rawText,
+      content,
     }],
   });
   return object;
+}
+
+async function extractionMessageContent(rawText: string, attachments: Attachment[]) {
+  if (attachments.length === 0) return rawText;
+  const parts: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; image: Uint8Array; mediaType: string }
+  > = [{ type: "text", text: attachmentPromptText(rawText, attachments) }];
+  for (const attachment of attachments) {
+    const image = await attachmentImageData(attachment);
+    if (image) parts.push({ type: "image", image, mediaType: attachment.contentType });
+  }
+  return parts;
+}
+
+function attachmentPromptText(rawText: string, attachments: Attachment[]): string {
+  const text = rawText || "Extract real-estate listing details from the attached image(s).";
+  const metadata = attachments
+    .map((a, i) => `Image ${i + 1}: ${a.filename}, ${a.contentType}, ${a.size} bytes, R2 key ${a.key}`)
+    .join("\n");
+  return `${text}\n\nAttached image metadata:\n${metadata}`;
 }
 
 // `tsx lib/extraction/extract.ts "<message>"` — quick manual one-off.

@@ -7,6 +7,8 @@ export interface Attachment {
   filename: string;
   contentType: string;
   size: number;
+  sha256?: string;
+  data?: Uint8Array;
 }
 
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
@@ -20,6 +22,17 @@ export function parseAttachments(value: unknown): Attachment[] {
       return Boolean(v.key && v.url && v.filename && v.contentType && typeof v.size === "number");
     })
     .slice(0, MAX_IMAGES);
+}
+
+export function persistableAttachments(attachments: Attachment[]): Attachment[] {
+  return attachments.map((a) => ({
+    key: a.key,
+    url: a.url,
+    filename: a.filename,
+    contentType: a.contentType,
+    size: a.size,
+    ...(a.sha256 ? { sha256: a.sha256 } : {}),
+  }));
 }
 
 export async function uploadImageFiles(files: File[]): Promise<Attachment[]> {
@@ -45,10 +58,18 @@ async function uploadToR2(file: File): Promise<Attachment> {
 
   const base = endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
   const body = Buffer.from(await file.arrayBuffer());
+  const sha256 = sha256Hex(body);
   const ext = extensionFor(file);
   const key = `ingest/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
   const uploadUrl = new URL(`${base}/${encodeURIComponentPath(key)}`);
-  const headers = signedPutHeaders(uploadUrl, body, file.type || "application/octet-stream", accessKeyId, secretAccessKey);
+  const headers = signedRequestHeaders(
+    uploadUrl,
+    "PUT",
+    sha256,
+    accessKeyId,
+    secretAccessKey,
+    file.type || "application/octet-stream",
+  );
 
   const res = await fetch(uploadUrl, { method: "PUT", headers, body });
   if (!res.ok) {
@@ -62,34 +83,56 @@ async function uploadToR2(file: File): Promise<Attachment> {
     filename: file.name || "image",
     contentType: file.type || "application/octet-stream",
     size: file.size,
+    sha256,
+    data: body,
   };
 }
 
-function signedPutHeaders(
+export async function attachmentImageData(attachment: Attachment): Promise<Uint8Array | null> {
+  if (attachment.data) return attachment.data;
+
+  const endpoint = process.env.R2_S3_ENDPOINT ?? process.env.R2_ENDPOINT;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY ?? process.env.R2_API_TOKEN;
+  if (!endpoint || !accessKeyId || !secretAccessKey) return null;
+
+  const base = endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
+  const url = new URL(`${base}/${encodeURIComponentPath(attachment.key)}`);
+  const payloadHash = sha256Hex("");
+  const headers = signedRequestHeaders(url, "GET", payloadHash, accessKeyId, secretAccessKey);
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) return null;
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+function signedRequestHeaders(
   url: URL,
-  body: Buffer,
-  contentType: string,
+  method: "GET" | "PUT",
+  payloadHash: string,
   accessKeyId: string,
   secretAccessKey: string,
+  contentType?: string,
 ): Headers {
   const now = new Date();
   const amzDate = isoDate(now);
   const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex(body);
+  const headerEntries: Array<[string, string]> = [
+    ["host", url.host],
+    ["x-amz-content-sha256", payloadHash],
+    ["x-amz-date", amzDate],
+  ];
+  if (contentType) headerEntries.unshift(["content-type", contentType]);
+
   const headers = new Headers({
-    "content-type": contentType,
     "x-amz-content-sha256": payloadHash,
     "x-amz-date": amzDate,
   });
+  if (contentType) headers.set("content-type", contentType);
 
-  const canonicalHeaders =
-    `content-type:${contentType}\n` +
-    `host:${url.host}\n` +
-    `x-amz-content-sha256:${payloadHash}\n` +
-    `x-amz-date:${amzDate}\n`;
-  const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+  const canonicalHeaders = headerEntries.map(([key, value]) => `${key}:${value}\n`).join("");
+  const signedHeaders = headerEntries.map(([key]) => key).join(";");
   const canonicalRequest = [
-    "PUT",
+    method,
     url.pathname,
     "",
     canonicalHeaders,

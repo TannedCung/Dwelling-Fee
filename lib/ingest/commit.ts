@@ -5,6 +5,7 @@ import { rawSignal, ingestSession } from "../../db/schema";
 import { getSession, userSourceText, userAttachments, addMessage } from "./session";
 import { persistDraft, type PersistResult } from "./persist";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
+import { persistableAttachments } from "../storage/r2";
 
 export interface CommitResult extends PersistResult {
   rawSignalId: string;
@@ -42,7 +43,7 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
         sourceType: session.sourceType,
         contentHash,
         rawText: text,
-        attachments: attachments.length > 0 ? attachments : null,
+        attachments: attachments.length > 0 ? persistableAttachments(attachments) : null,
         ingestSessionId: sessionId,
         status: "extracted",
       })

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getDb, type DbExecutor } from "../../db/client";
 import { ingestSession, ingestMessage, priceObservation } from "../../db/schema";
 import { PropertyExtraction } from "../extraction/schema";
-import { parseAttachments, type Attachment } from "../storage/r2";
+import { parseAttachments, persistableAttachments, type Attachment } from "../storage/r2";
 
 export type SourceType = "broker" | "web" | "agent" | "user";
 export type SessionStatus = "open" | "committed" | "abandoned";
@@ -84,7 +84,7 @@ export async function addMessage(
     sessionId,
     role,
     content,
-    attachments: files.length > 0 ? files : null,
+    attachments: files.length > 0 ? persistableAttachments(files) : null,
   });
   await db.update(ingestSession).set({ updatedAt: new Date() }).where(eq(ingestSession.id, sessionId));
 }
