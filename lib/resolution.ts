@@ -1,6 +1,6 @@
-import { and, isNull, or, ilike, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, or, ilike, sql, type SQL } from "drizzle-orm";
 import { getDb, type DbExecutor } from "../db/client";
-import { property } from "../db/schema";
+import { building, project, property } from "../db/schema";
 import type { PropertyExtraction } from "./extraction/schema";
 import { normalizeName, tokens, jaccard, splitNameTags, uniqueText } from "./text";
 
@@ -17,6 +17,8 @@ const REVIEW_MIN = 0.45; // plausible but uncertain → human review queue
 export interface Candidate {
   id: string;
   name: string | null;
+  projectId: string | null;
+  buildingId: string | null;
   projectName: string | null;
   buildingName: string | null;
   houseNumber: string | null;
@@ -40,6 +42,8 @@ export function score(
   extraction: PropertyExtraction,
   cand: {
     name: string | null;
+    projectId?: string | null;
+    buildingId?: string | null;
     projectName?: string | null;
     buildingName?: string | null;
     houseNumber?: string | null;
@@ -101,14 +105,26 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
     clauses.push(sql`${property.aliases}::text ilike ${`%${t}%`}`);
     clauses.push(sql`${property.tags}::text ilike ${`%${t}%`}`);
     clauses.push(ilike(property.wikiNotes, `%${t}%`));
+    clauses.push(ilike(project.nameNormalized, `%${t}%`));
+    clauses.push(sql`${project.aliases}::text ilike ${`%${t}%`}`);
+    clauses.push(sql`${project.tags}::text ilike ${`%${t}%`}`);
+    clauses.push(ilike(project.wikiNotes, `%${t}%`));
+    clauses.push(ilike(building.nameNormalized, `%${t}%`));
+    clauses.push(sql`${building.aliases}::text ilike ${`%${t}%`}`);
+    clauses.push(sql`${building.tags}::text ilike ${`%${t}%`}`);
+    clauses.push(ilike(building.wikiNotes, `%${t}%`));
   }
 
   const rows = await db
     .select({
       id: property.id,
       name: property.name,
+      projectId: property.projectId,
+      buildingId: property.buildingId,
       projectName: property.projectName,
       buildingName: property.buildingName,
+      projectEntityName: project.name,
+      buildingEntityName: building.name,
       houseNumber: property.houseNumber,
       aliases: property.aliases,
       wikiNotes: property.wikiNotes,
@@ -117,6 +133,8 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
       attributes: property.attributes,
     })
     .from(property)
+    .leftJoin(project, eq(property.projectId, project.id))
+    .leftJoin(building, eq(property.buildingId, building.id))
     .where(
       and(
         isNull(property.canonicalPropertyId), // only canonical records
@@ -129,8 +147,10 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
     .map((r) => ({
       id: r.id,
       name: r.name,
-      projectName: r.projectName,
-      buildingName: r.buildingName,
+      projectId: r.projectId,
+      buildingId: r.buildingId,
+      projectName: r.projectEntityName ?? r.projectName,
+      buildingName: r.buildingEntityName ?? r.buildingName,
       houseNumber: r.houseNumber,
       aliases: r.aliases,
       wikiNotes: r.wikiNotes,
@@ -156,6 +176,9 @@ export async function resolve(extraction: PropertyExtraction, db: DbExecutor = g
 export async function createPropertyFromExtraction(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<string> {
   const name = displayName(extraction);
   const projectName = cleanProjectName(extraction.projectName ?? null);
+  const projectId = projectName ? await getOrCreateProject(projectName, extraction, db) : null;
+  const buildingName = extraction.buildingName?.trim() || null;
+  const buildingId = projectId && buildingName ? await getOrCreateBuilding(projectId, buildingName, extraction, db) : null;
   const tags = uniqueText([
     ...extraction.tags,
     ...splitNameTags(extraction.name).tags,
@@ -171,10 +194,12 @@ export async function createPropertyFromExtraction(extraction: PropertyExtractio
     .values({
       name,
       nameNormalized: name ? normalizeName(name) : null,
+      projectId,
+      buildingId,
       projectName,
       projectNameNormalized: projectName ? normalizeName(projectName) : null,
-      buildingName: extraction.buildingName?.trim() || null,
-      buildingNameNormalized: extraction.buildingName ? normalizeName(extraction.buildingName) : null,
+      buildingName,
+      buildingNameNormalized: buildingName ? normalizeName(buildingName) : null,
       houseNumber: extraction.houseNumber?.trim() || null,
       houseNumberNormalized: extraction.houseNumber ? normalizeName(extraction.houseNumber) : null,
       aliases: aliases.length > 0 ? aliases : null,
@@ -187,6 +212,96 @@ export async function createPropertyFromExtraction(extraction: PropertyExtractio
     })
     .returning({ id: property.id });
   return row!.id;
+}
+
+export async function hasGroundedHierarchy(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<boolean> {
+  const projectName = cleanProjectName(extraction.projectName ?? null);
+  if (!projectName) return true;
+  const existingProject = await findProjectByName(projectName, db);
+  if (!existingProject) return false;
+  const buildingName = extraction.buildingName?.trim();
+  if (!buildingName) return true;
+  return Boolean(await findBuildingByName(existingProject.id, buildingName, db));
+}
+
+export async function findProjectByName(name: string, db: DbExecutor = getDb()): Promise<{ id: string; name: string } | null> {
+  const normalized = normalizeName(name);
+  if (!normalized) return null;
+  const row = await db.query.project.findFirst({
+    columns: { id: true, name: true },
+    where: and(isNull(project.canonicalProjectId), eq(project.nameNormalized, normalized)),
+  });
+  return row ?? null;
+}
+
+export async function findBuildingByName(
+  projectId: string,
+  name: string,
+  db: DbExecutor = getDb(),
+): Promise<{ id: string; name: string } | null> {
+  const normalized = normalizeName(name);
+  if (!normalized) return null;
+  const row = await db.query.building.findFirst({
+    columns: { id: true, name: true },
+    where: and(isNull(building.canonicalBuildingId), eq(building.projectId, projectId), eq(building.nameNormalized, normalized)),
+  });
+  return row ?? null;
+}
+
+async function getOrCreateProject(name: string, extraction: PropertyExtraction, db: DbExecutor): Promise<string> {
+  const existing = await findProjectByName(name, db);
+  if (existing) return existing.id;
+  const aliases = uniqueText([
+    extraction.name,
+    extraction.projectName,
+    ...extraction.aliases,
+  ]).filter((alias) => normalizeName(alias) !== normalizeName(name));
+  const tags = uniqueText([
+    ...extraction.tags,
+    ...splitNameTags(extraction.name).tags,
+    ...splitNameTags(extraction.projectName).tags,
+  ]);
+  const inserted = await db
+    .insert(project)
+    .values({
+      name,
+      nameNormalized: normalizeName(name),
+      aliases: aliases.length > 0 ? aliases : null,
+      tags: tags.length > 0 ? tags : null,
+      addressText: extraction.locationText ?? null,
+    })
+    .onConflictDoNothing({ target: project.nameNormalized })
+    .returning({ id: project.id });
+  if (inserted[0]) return inserted[0].id;
+  const raced = await findProjectByName(name, db);
+  if (!raced) throw new Error("project create failed");
+  return raced.id;
+}
+
+async function getOrCreateBuilding(
+  projectId: string,
+  name: string,
+  extraction: PropertyExtraction,
+  db: DbExecutor,
+): Promise<string> {
+  const existing = await findBuildingByName(projectId, name, db);
+  if (existing) return existing.id;
+  const tags = uniqueText(extraction.tags);
+  const inserted = await db
+    .insert(building)
+    .values({
+      projectId,
+      name,
+      nameNormalized: normalizeName(name),
+      tags: tags.length > 0 ? tags : null,
+      addressText: extraction.locationText ?? null,
+    })
+    .onConflictDoNothing({ target: [building.projectId, building.nameNormalized] })
+    .returning({ id: building.id });
+  if (inserted[0]) return inserted[0].id;
+  const raced = await findBuildingByName(projectId, name, db);
+  if (!raced) throw new Error("building create failed");
+  return raced.id;
 }
 
 export function displayName(extraction: PropertyExtraction): string | null {

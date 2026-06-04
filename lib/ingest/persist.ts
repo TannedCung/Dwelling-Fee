@@ -1,6 +1,6 @@
 import { getDb, type DbExecutor } from "../../db/client";
 import { priceObservation } from "../../db/schema";
-import { resolve, createPropertyFromExtraction } from "../resolution";
+import { resolve, createPropertyFromExtraction, hasGroundedHierarchy } from "../resolution";
 import type { PropertyExtraction } from "../extraction/schema";
 import { EXTRACTOR_VERSION } from "../extraction/extract";
 import { hasIdentity } from "../extraction/completeness";
@@ -46,7 +46,7 @@ export async function persistDraft(
       const decision = await resolve(p, db);
       if (decision.action === "link") { propertyId = decision.propertyId; autoLinked++; }
       else if (decision.action === "create") {
-        if (requiresGroundedParent(p)) review = true;
+        if (await requiresGroundedParent(p, db)) review = true;
         else { propertyId = await createPropertyFromExtraction(p, db); created++; }
       }
       else review = true; // ambiguous match → queue for human resolution
@@ -78,11 +78,18 @@ export async function persistDraft(
 }
 
 export function shouldReviewExtraction(p: PropertyExtraction): boolean {
-  return p.confidence < REVIEW_CONFIDENCE_THRESHOLD || !hasIdentity(p);
+  return p.confidence < REVIEW_CONFIDENCE_THRESHOLD || !hasIdentity(p) || !hasSpecificPropertyIdentity(p);
 }
 
-export function requiresGroundedParent(p: PropertyExtraction): boolean {
-  return p.type === "apartment" && Boolean(p.projectName && (p.buildingName || p.houseNumber));
+export function hasSpecificPropertyIdentity(p: PropertyExtraction): boolean {
+  if (p.type !== "apartment") return true;
+  if (!p.projectName && !p.buildingName) return true;
+  return Boolean(p.houseNumber);
+}
+
+export async function requiresGroundedParent(p: PropertyExtraction, db: DbExecutor = getDb()): Promise<boolean> {
+  if (p.type !== "apartment" || !p.projectName || !p.houseNumber) return false;
+  return !(await hasGroundedHierarchy(p, db));
 }
 
 export function derivePricePerM2(

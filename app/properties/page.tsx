@@ -20,7 +20,7 @@ export default async function PropertiesPage() {
       <header className="page-head">
         <div className="eyebrow">Properties</div>
         <h1>Properties</h1>
-        <p>Resolved property entities — living pages that aggregate observations over time, most-observed first.</p>
+        <p>Resolved unit, house, and lot entities — living pages that aggregate observations over time, most-observed first.</p>
       </header>
 
       {error ? (

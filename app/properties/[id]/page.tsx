@@ -73,6 +73,20 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
           {detail.tags.length > 0 && ` · ${detail.tags.join(", ")}`}
           {detail.addressText && ` · ${detail.addressText}`} · {detail.observations.length} observations
         </p>
+        {(detail.projectId || detail.buildingId) && (
+          <div className="prop-tags" style={{ marginTop: 12 }}>
+            {detail.projectId && (
+              <Link href={`/projects/${detail.projectId}`} className="chip">
+                <Icon name="building-2" size={12} />{detail.projectName}
+              </Link>
+            )}
+            {detail.buildingId && (
+              <Link href={`/buildings/${detail.buildingId}`} className="chip">
+                <Icon name="building" size={12} />{detail.buildingName}
+              </Link>
+            )}
+          </div>
+        )}
       </header>
 
       <section className="detail-hero section" style={{ marginTop: 0 }}>

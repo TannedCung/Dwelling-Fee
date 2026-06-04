@@ -2,6 +2,49 @@ import { sql } from "drizzle-orm";
 import { getDb, type DbExecutor } from "../../db/client";
 
 const STATEMENTS = [
+  sql`
+    CREATE TABLE IF NOT EXISTS "project" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "canonical_project_id" uuid,
+      "name" text NOT NULL,
+      "name_normalized" text NOT NULL,
+      "aliases" jsonb,
+      "tags" jsonb,
+      "location_id" uuid,
+      "geom" geometry(Point, 4326),
+      "address_text" text,
+      "year_built" integer,
+      "renovation_year" integer,
+      "attributes" jsonb,
+      "wiki_notes" text,
+      "ai_summary" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "building" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "canonical_building_id" uuid,
+      "project_id" uuid NOT NULL,
+      "name" text NOT NULL,
+      "name_normalized" text NOT NULL,
+      "aliases" jsonb,
+      "tags" jsonb,
+      "location_id" uuid,
+      "geom" geometry(Point, 4326),
+      "address_text" text,
+      "year_built" integer,
+      "renovation_year" integer,
+      "attributes" jsonb,
+      "wiki_notes" text,
+      "ai_summary" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "project_id" uuid`,
+  sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "building_id" uuid`,
   sql`ALTER TABLE "ingest_message" ADD COLUMN IF NOT EXISTS "attachments" jsonb`,
   sql`ALTER TABLE "price_observation" ADD COLUMN IF NOT EXISTS "tags" jsonb`,
   sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "project_name" text`,
@@ -12,14 +55,112 @@ const STATEMENTS = [
   sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "house_number_normalized" text`,
   sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "aliases" jsonb`,
   sql`ALTER TABLE "property" ADD COLUMN IF NOT EXISTS "tags" jsonb`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "project_name_normalized_unique" ON "project" USING btree ("name_normalized")`,
+  sql`CREATE INDEX IF NOT EXISTS "project_geom_idx" ON "project" USING gist ("geom")`,
+  sql`CREATE INDEX IF NOT EXISTS "project_name_norm_idx" ON "project" USING btree ("name_normalized")`,
+  sql`CREATE INDEX IF NOT EXISTS "project_aliases_idx" ON "project" USING gin ("aliases")`,
+  sql`CREATE INDEX IF NOT EXISTS "project_tags_idx" ON "project" USING gin ("tags")`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "building_project_name_unique" ON "building" USING btree ("project_id","name_normalized")`,
+  sql`CREATE INDEX IF NOT EXISTS "building_project_idx" ON "building" USING btree ("project_id")`,
+  sql`CREATE INDEX IF NOT EXISTS "building_geom_idx" ON "building" USING gist ("geom")`,
+  sql`CREATE INDEX IF NOT EXISTS "building_name_norm_idx" ON "building" USING btree ("name_normalized")`,
+  sql`CREATE INDEX IF NOT EXISTS "building_aliases_idx" ON "building" USING gin ("aliases")`,
+  sql`CREATE INDEX IF NOT EXISTS "building_tags_idx" ON "building" USING gin ("tags")`,
   sql`CREATE INDEX IF NOT EXISTS "obs_tags_idx" ON "price_observation" USING gin ("tags")`,
+  sql`CREATE INDEX IF NOT EXISTS "property_project_idx" ON "property" USING btree ("project_id")`,
+  sql`CREATE INDEX IF NOT EXISTS "property_building_idx" ON "property" USING btree ("building_id")`,
   sql`CREATE INDEX IF NOT EXISTS "property_project_name_norm_idx" ON "property" USING btree ("project_name_normalized")`,
   sql`CREATE INDEX IF NOT EXISTS "property_building_name_norm_idx" ON "property" USING btree ("building_name_normalized")`,
   sql`CREATE INDEX IF NOT EXISTS "property_house_number_norm_idx" ON "property" USING btree ("house_number_normalized")`,
   sql`CREATE INDEX IF NOT EXISTS "property_tags_idx" ON "property" USING gin ("tags")`,
+  sql`
+    INSERT INTO "project" ("name", "name_normalized", "aliases", "tags", "location_id", "geom", "address_text", "created_at", "updated_at")
+    SELECT DISTINCT ON (norm)
+      project_name,
+      norm,
+      aliases,
+      tags,
+      location_id,
+      geom,
+      address_text,
+      now(),
+      now()
+    FROM (
+      SELECT
+        project_name,
+        coalesce(nullif(project_name_normalized, ''), lower(trim(project_name))) AS norm,
+        aliases,
+        tags,
+        location_id,
+        geom,
+        address_text
+      FROM "property"
+      WHERE project_name IS NOT NULL AND trim(project_name) <> ''
+    ) p
+    WHERE norm IS NOT NULL AND norm <> ''
+    ORDER BY norm, project_name
+    ON CONFLICT ("name_normalized") DO NOTHING
+  `,
+  sql`
+    INSERT INTO "building" ("project_id", "name", "name_normalized", "aliases", "tags", "location_id", "geom", "address_text", "created_at", "updated_at")
+    SELECT DISTINCT ON (pr.id, b.norm)
+      pr.id,
+      b.building_name,
+      b.norm,
+      b.aliases,
+      b.tags,
+      b.location_id,
+      b.geom,
+      b.address_text,
+      now(),
+      now()
+    FROM (
+      SELECT
+        project_name,
+        coalesce(nullif(project_name_normalized, ''), lower(trim(project_name))) AS project_norm,
+        building_name,
+        coalesce(nullif(building_name_normalized, ''), lower(trim(building_name))) AS norm,
+        aliases,
+        tags,
+        location_id,
+        geom,
+        address_text
+      FROM "property"
+      WHERE project_name IS NOT NULL AND trim(project_name) <> ''
+        AND building_name IS NOT NULL AND trim(building_name) <> ''
+    ) b
+    INNER JOIN "project" pr ON pr.name_normalized = b.project_norm
+    WHERE b.norm IS NOT NULL AND b.norm <> ''
+    ORDER BY pr.id, b.norm, b.building_name
+    ON CONFLICT ("project_id", "name_normalized") DO NOTHING
+  `,
+  sql`
+    UPDATE "property" p
+    SET "project_id" = pr.id
+    FROM "project" pr
+    WHERE p.project_id IS NULL
+      AND p.project_name IS NOT NULL
+      AND pr.name_normalized = coalesce(nullif(p.project_name_normalized, ''), lower(trim(p.project_name)))
+  `,
+  sql`
+    UPDATE "property" p
+    SET "building_id" = b.id
+    FROM "building" b
+    WHERE p.building_id IS NULL
+      AND p.project_id = b.project_id
+      AND p.building_name IS NOT NULL
+      AND b.name_normalized = coalesce(nullif(p.building_name_normalized, ''), lower(trim(p.building_name)))
+  `,
 ];
 
 const REQUIRED_COLUMNS = [
+  ["project", "name"],
+  ["project", "name_normalized"],
+  ["building", "project_id"],
+  ["building", "name"],
+  ["building", "name_normalized"],
+  ["property", "project_id"],
+  ["property", "building_id"],
   ["ingest_message", "attachments"],
   ["price_observation", "tags"],
   ["property", "project_name"],

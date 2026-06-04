@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { derivePricePerM2, requiresGroundedParent, shouldReviewExtraction } from "./persist";
+import { derivePricePerM2, hasSpecificPropertyIdentity, requiresGroundedParent, shouldReviewExtraction } from "./persist";
 import type { PropertyExtraction } from "../extraction/schema";
 
 function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
@@ -52,11 +52,32 @@ test("derivePricePerM2: unknown basis is null", () => {
 
 test("shouldReviewExtraction: identity-less extracts are quarantined even with high confidence", () => {
   assert.equal(shouldReviewExtraction(ex({ name: null, projectName: null, locationText: null })), true);
-  assert.equal(shouldReviewExtraction(ex({ name: null, projectName: "Project Alpha", locationText: null })), false);
+  assert.equal(shouldReviewExtraction(ex({ type: "house", name: null, projectName: "Project Alpha", locationText: null })), false);
 });
 
 test("requiresGroundedParent: apartment tower/unit observations need grounded parent before creation", () => {
-  assert.equal(requiresGroundedParent(ex({ projectName: "Project Alpha", buildingName: "Tower A", houseNumber: "Unit 1" })), true);
-  assert.equal(requiresGroundedParent(ex({ projectName: "Project Alpha", buildingName: null, houseNumber: null })), false);
-  assert.equal(requiresGroundedParent(ex({ type: "house", projectName: "Project Alpha", houseNumber: "LK-1" })), false);
+  assert.equal(hasSpecificPropertyIdentity(ex({ projectName: "Project Alpha", buildingName: "Tower A", houseNumber: "Unit 1" })), true);
+  assert.equal(hasSpecificPropertyIdentity(ex({ projectName: "Project Alpha", buildingName: null, houseNumber: null })), false);
+  assert.equal(hasSpecificPropertyIdentity(ex({ type: "house", projectName: "Project Alpha", houseNumber: "LK-1" })), true);
+});
+
+test("shouldReviewExtraction: apartment project/building signals need a specific unit identity", () => {
+  assert.equal(shouldReviewExtraction(ex({ projectName: "Project Alpha", buildingName: null, houseNumber: null })), true);
+  assert.equal(shouldReviewExtraction(ex({ projectName: "Project Alpha", buildingName: "Tower A", houseNumber: null })), true);
+});
+
+test("requiresGroundedParent: checks project/building existence before auto-create", async () => {
+  const calls: string[] = [];
+  const db = {
+    query: {
+      project: {
+        findFirst: async () => {
+          calls.push("project");
+          return null;
+        },
+      },
+    },
+  } as never;
+  assert.equal(await requiresGroundedParent(ex({ projectName: "Project Alpha", buildingName: "Tower A", houseNumber: "Unit 1" }), db), true);
+  assert.deepEqual(calls, ["project"]);
 });

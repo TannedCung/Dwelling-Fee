@@ -12,6 +12,12 @@ const DONE_MESSAGE: Record<string, string> = {
   dismiss: "Observation dismissed.",
 };
 
+function candidateTitle(c: Candidate): string {
+  return [c.projectName, c.buildingName, c.houseNumber].filter(Boolean).join(" / ")
+    || c.name
+    || "(unnamed)";
+}
+
 export function ReviewActions({ observationId, candidates }: { observationId: string; candidates: Candidate[] }) {
   const [pending, start] = useTransition();
   const { notify } = useToast();
@@ -39,7 +45,7 @@ export function ReviewActions({ observationId, candidates }: { observationId: st
       {candidates.map((c) => (
         <button key={c.id} disabled={pending} onClick={() => act({ action: "link", propertyId: c.id })} className="btn ghost sm">
           <Icon name="link" size={15} />
-          {c.name ?? "(unnamed)"} <span className="mono" style={{ color: "var(--ink-3)" }}>{(c.score * 100).toFixed(0)}%</span>
+          {candidateTitle(c)} <span className="mono" style={{ color: "var(--ink-3)" }}>{(c.score * 100).toFixed(0)}%</span>
         </button>
       ))}
       <button disabled={pending} onClick={() => act({ action: "create" })} className="btn secondary sm">

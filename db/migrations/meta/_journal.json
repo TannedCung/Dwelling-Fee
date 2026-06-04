@@ -43,6 +43,13 @@
       "when": 1780475476214,
       "tag": "0005_puzzling_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780545560928,
+      "tag": "0006_late_shockwave",
+      "breakpoints": true
     }
   ]
 }

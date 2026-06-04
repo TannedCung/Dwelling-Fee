@@ -69,6 +69,68 @@ export const location = pgTable(
   (t) => [index("location_geom_idx").using("gist", t.geom)],
 );
 
+// ── project — durable root wiki entity ──────────────────────────────────────
+export const project = pgTable(
+  "project",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    canonicalProjectId: uuid("canonical_project_id").references((): AnyPgColumn => project.id),
+    name: text("name").notNull(),
+    nameNormalized: text("name_normalized").notNull(),
+    aliases: jsonb("aliases"),
+    tags: jsonb("tags"),
+    locationId: uuid("location_id").references(() => location.id),
+    geom: pointGeometry("geom"),
+    addressText: text("address_text"),
+    yearBuilt: integer("year_built"),
+    renovationYear: integer("renovation_year"),
+    attributes: jsonb("attributes"),
+    wikiNotes: text("wiki_notes"),
+    aiSummary: text("ai_summary"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("project_name_normalized_unique").on(t.nameNormalized),
+    index("project_geom_idx").using("gist", t.geom),
+    index("project_name_norm_idx").on(t.nameNormalized),
+    index("project_aliases_idx").using("gin", t.aliases),
+    index("project_tags_idx").using("gin", t.tags),
+  ],
+);
+
+// ── building — durable project child wiki entity ────────────────────────────
+export const building = pgTable(
+  "building",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    canonicalBuildingId: uuid("canonical_building_id").references((): AnyPgColumn => building.id),
+    projectId: uuid("project_id").references(() => project.id).notNull(),
+    name: text("name").notNull(),
+    nameNormalized: text("name_normalized").notNull(),
+    aliases: jsonb("aliases"),
+    tags: jsonb("tags"),
+    locationId: uuid("location_id").references(() => location.id),
+    geom: pointGeometry("geom"),
+    addressText: text("address_text"),
+    yearBuilt: integer("year_built"),
+    renovationYear: integer("renovation_year"),
+    attributes: jsonb("attributes"),
+    wikiNotes: text("wiki_notes"),
+    aiSummary: text("ai_summary"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("building_project_name_unique").on(t.projectId, t.nameNormalized),
+    index("building_project_idx").on(t.projectId),
+    index("building_geom_idx").using("gist", t.geom),
+    index("building_name_norm_idx").on(t.nameNormalized),
+    index("building_aliases_idx").using("gin", t.aliases),
+    index("building_tags_idx").using("gin", t.tags),
+  ],
+);
+
 // ── property — durable entity ("living page") ───────────────────────────────
 export const property = pgTable(
   "property",
@@ -79,6 +141,10 @@ export const property = pgTable(
     name: text("name"),
     // Diacritic-stripped, lowercased name used as a blocking key for entity resolution (§5).
     nameNormalized: text("name_normalized"),
+    projectId: uuid("project_id").references(() => project.id),
+    buildingId: uuid("building_id").references(() => building.id),
+    // Transitional compatibility fields. Prefer project_id/building_id for new
+    // code, but keep these populated until old views/migrations are retired.
     projectName: text("project_name"),
     projectNameNormalized: text("project_name_normalized"),
     buildingName: text("building_name"),
@@ -102,6 +168,8 @@ export const property = pgTable(
   },
   (t) => [
     index("property_geom_idx").using("gist", t.geom),
+    index("property_project_idx").on(t.projectId),
+    index("property_building_idx").on(t.buildingId),
     index("property_name_norm_idx").on(t.nameNormalized),
     index("property_project_name_norm_idx").on(t.projectNameNormalized),
     index("property_building_name_norm_idx").on(t.buildingNameNormalized),

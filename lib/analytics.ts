@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
-import { priceObservation, property, location } from "../db/schema";
+import { building, priceObservation, project, property, location } from "../db/schema";
 import { distribution, quantile, MIN_SAMPLE, type Distribution } from "./stats";
 
 /**
@@ -251,13 +251,17 @@ export async function loadAnalytics(filters: AnalyticsFilters, now = new Date())
       observedAt: priceObservation.observedAt,
       createdAt: priceObservation.createdAt,
       propertyType: property.type,
-      projectName: property.projectName,
-      buildingName: property.buildingName,
+      projectName: project.name,
+      propertyProjectName: property.projectName,
+      buildingName: building.name,
+      propertyBuildingName: property.buildingName,
       addressText: property.addressText,
       locName: location.name,
     })
     .from(priceObservation)
     .leftJoin(property, eq(priceObservation.propertyId, property.id))
+    .leftJoin(project, eq(property.projectId, project.id))
+    .leftJoin(building, eq(property.buildingId, building.id))
     .leftJoin(location, eq(property.locationId, location.id))
     .where(eq(priceObservation.needsReview, false));
 
@@ -266,8 +270,8 @@ export async function loadAnalytics(filters: AnalyticsFilters, now = new Date())
     listingType: r.listingType,
     dealStatus: r.dealStatus,
     propertyType: r.propertyType ?? "unknown",
-    projectName: r.projectName,
-    buildingName: r.buildingName,
+    projectName: r.projectName ?? r.propertyProjectName,
+    buildingName: r.buildingName ?? r.propertyBuildingName,
     area: areaLabel(r.locName, r.addressText),
     at: r.observedAt ?? r.createdAt,
   }));

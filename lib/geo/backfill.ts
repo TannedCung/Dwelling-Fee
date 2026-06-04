@@ -52,11 +52,13 @@ export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   const db = getDb();
   const res = await db.execute(
     sql`select id,
-          coalesce(nullif(concat_ws(' ', project_name, building_name, house_number), ''), name) as name,
-          address_text
-        from property
-        where geom is null and (address_text is not null or name is not null or project_name is not null)
-        order by created_at limit ${limit}`,
+          coalesce(nullif(concat_ws(' ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
+          p.address_text
+        from property p
+        left join project pr on p.project_id = pr.id
+        left join building b on p.building_id = b.id
+        where p.geom is null and (p.address_text is not null or p.name is not null or p.project_name is not null or pr.name is not null)
+        order by p.created_at limit ${limit}`,
   );
   const rows = rowsOf<{ id: string; name: string | null; address_text: string | null }>(res);
 
@@ -92,15 +94,17 @@ export async function mapPoints(): Promise<MapPoint[]> {
   const db = getDb();
   const res = await db.execute(sql`
     select p.id,
-      coalesce(nullif(concat_ws(' / ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
+      coalesce(nullif(concat_ws(' / ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' / ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
       ST_Y(p.geom) as lat, ST_X(p.geom) as lng,
       percentile_cont(0.5) within group (order by o.price_per_m2)
         filter (where o.listing_type = 'sale' and o.price_per_m2 is not null and not o.needs_review) as median_ppm2,
       count(o.id) filter (where o.price_per_m2 is not null and not o.needs_review) as n
     from property p
+    left join project pr on p.project_id = pr.id
+    left join building b on p.building_id = b.id
     left join price_observation o on o.property_id = p.id
     where p.geom is not null
-    group by p.id`);
+    group by p.id, pr.id, b.id`);
   return rowsOf<{ id: string; name: string | null; lat: number; lng: number; median_ppm2: string | null; n: number }>(res).map((r) => ({
     id: r.id,
     name: r.name,

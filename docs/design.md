@@ -118,14 +118,15 @@ A multi-step, **durable** pipeline (one step can fail/retry without redoing the 
    excluded from analytics until a human confirms.
 
 ### (3) Entity / Wiki
-Property and Location living pages: profile, aggregated observations, broker notes, external
-refs, AI summary that refreshes (cheaply, debounced) as new signals arrive. Broker **contacts**
-are their own entity (reputation, dedup, PII boundary).
+Project, Building, Property, and Location living pages: profile, aggregated observations, broker
+notes, external refs, AI summary that refreshes (cheaply, debounced) as new signals arrive.
+Projects own buildings; buildings own the most specific known property rows (unit/house/lot).
+Broker **contacts** are their own entity (reputation, dedup, PII boundary).
 
 These pages are also the retrieval layer for entity resolution. Postgres fields such as aliases,
 tags, and wiki notes are queried before the system decides whether to link, review, or create a
-property. Specific project knowledge must be stored there with evidence rather than hardcoded in
-application logic.
+project, building, or property. Specific project knowledge must be stored there with evidence
+rather than hardcoded in application logic.
 
 ### (4) Database
 Neon Postgres. Extensions: **PostGIS** (geometry), **pgvector** (entity matching / dedup).
@@ -148,9 +149,9 @@ ones. Use a standard record-linkage pipeline:
    - low score → **create new** property
 4. **Merge is reversible & audited:** soft-merge via `canonical_property_id` + a `property_merge`
    log. Brokers conflate distinct units and split identical ones; unmerge must be a button.
-5. **Granularity decision:** is the entity the *building/project* or the *individual unit*? Default
-   recommendation: **project + unit attributes on the observation**, since most signals describe a
-   unit but identify it only by project + floor/area. (Open decision §12.)
+5. **Granularity decision:** `project` and `building` are parent wiki entities; `property` is the
+   most specific known unit/house/lot. Apartment observations that only identify a project/building
+   are review-pending until a reviewer decides how to attach them.
 
 Start with **deterministic blocking + rules**; add embeddings only once you have a labeled set to
 tune thresholds against. Don't pay for pgvector before it earns its place.
@@ -186,12 +187,59 @@ reputation      jsonb        -- signal counts, reliability score
 created_at      timestamptz default now()
 ```
 
-### `property` — durable entity ("living page")
+### `project` — root development/wiki entity
+```sql
+id                    uuid pk
+canonical_project_id  uuid fk -> project
+name                  text
+name_normalized       text unique
+aliases               jsonb
+tags                  jsonb
+location_id           uuid fk -> location
+geom                  geometry(Point,4326)
+address_text          text
+year_built            int
+renovation_year       int
+attributes            jsonb
+wiki_notes            text
+ai_summary            text
+created_at            timestamptz default now()
+updated_at            timestamptz
+```
+
+### `building` — project child/wiki entity
+```sql
+id                    uuid pk
+canonical_building_id uuid fk -> building
+project_id            uuid fk -> project
+name                  text
+name_normalized       text
+aliases               jsonb
+tags                  jsonb
+location_id           uuid fk -> location
+geom                  geometry(Point,4326)
+address_text          text
+year_built            int
+renovation_year       int
+attributes            jsonb
+wiki_notes            text
+ai_summary            text
+created_at            timestamptz default now()
+updated_at            timestamptz
+unique(project_id, name_normalized)
+```
+
+### `property` — durable specific entity ("living page")
 ```sql
 id                    uuid pk
 canonical_property_id uuid fk -> property   -- self-ref; null = canonical
 name                  text
 type                  text     -- 'apartment'|'house'|'project'|'land'
+project_id            uuid fk -> project
+building_id           uuid fk -> building
+project_name          text     -- transitional compatibility mirror
+building_name         text     -- transitional compatibility mirror
+house_number          text
 location_id           uuid fk -> location
 geom                  geometry(Point,4326)
 address_text          text
