@@ -1,14 +1,66 @@
+import type { Metadata, Viewport } from "next";
 import { listSessions, type SessionListItem } from "../lib/ingest";
 import { DatabaseError } from "./_components/notice";
 import { describeError } from "../lib/page-error";
 import { Icon } from "./_components/icon";
 import { NewSessionButton } from "./_components/new-session-button";
 import { SessionsRail } from "./ingest/sessions-rail";
+import { auth, isAllowedEmail } from "../auth";
+import { Landing } from "./_components/landing";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const SITE_URL = "https://dwelling-fee.vercel.app";
+
+export const viewport: Viewport = { themeColor: "#F4EADA" };
+
+// SEO for the public landing served at `/` to unauthenticated visitors.
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  title: "Dwelling Fee — Housing price intelligence from real broker chatter",
+  description:
+    "Dwelling Fee turns fragmented broker messages, listings and screenshots into structured, queryable housing-price intelligence — so you can reason about what a home is actually worth, with provenance and confidence on every number.",
+  keywords: [
+    "housing price intelligence",
+    "real estate data",
+    "property valuation",
+    "price per m2",
+    "broker message extraction",
+    "Vietnam real estate",
+    "asking vs transacted price",
+    "market analytics",
+  ],
+  authors: [{ name: "Dwelling Fee" }],
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true, "max-image-preview": "large" },
+  openGraph: {
+    type: "website",
+    siteName: "Dwelling Fee",
+    title: "Dwelling Fee — Housing price intelligence from real broker chatter",
+    description:
+      "Structured, queryable market intelligence from messy broker messages. Every fact carries provenance and a confidence score — never a single confident number.",
+    url: "/",
+    locale: "en_US",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "Dwelling Fee — housing price intelligence" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Dwelling Fee — Housing price intelligence",
+    description:
+      "Turn fragmented broker chatter into structured market intelligence — with provenance and confidence on every number.",
+    images: ["/og-image.png"],
+  },
+};
+
 export default async function Home() {
+  const session = await auth();
+  // Unauthenticated visitors (and crawlers) get the public marketing landing.
+  if (!isAllowedEmail(session?.user?.email)) return <Landing />;
+  return <Dashboard />;
+}
+
+async function Dashboard() {
   let sessions: SessionListItem[] = [];
   let error: string | null = null;
   try {

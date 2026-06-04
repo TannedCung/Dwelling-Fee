@@ -7,6 +7,10 @@ import { isAllowedEmail } from "./auth";
  * ?callbackUrl so the user lands back where they were after authenticating.
  */
 export default auth((req) => {
+  // The home page is the public marketing landing — always reachable so it can
+  // be crawled and indexed. (Authenticated users get the app dashboard there.)
+  if (req.nextUrl.pathname === "/") return;
+
   const allowed = isAllowedEmail(req.auth?.user?.email);
   if (allowed) return;
 
