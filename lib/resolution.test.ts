@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanProjectName, displayName, score } from "./resolution";
+import { cleanProjectName, displayName, resolutionIdentity, score } from "./resolution";
 import type { PropertyExtraction } from "./extraction/schema";
 
 function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
@@ -69,4 +69,35 @@ test("score: prefixed project alias matches canonical project hierarchy", () => 
     { name: "ABC / Căn 1", projectName: "ABC", houseNumber: "Căn 1", type: "house", attributes: { areaM2: 75 } },
   );
   assert.ok(s >= 0.8, `expected auto-link score, got ${s}`);
+});
+
+test("resolutionIdentity: Lumi subzone/tower/unit observations resolve to the parent project", () => {
+  const identity = resolutionIdentity(ex({
+    name: "Lumi Signature Tòa Elite Căn 4",
+    projectName: "Lumi Signature",
+    buildingName: "Tòa Elite",
+    houseNumber: "Căn 4",
+    locationText: "Lumi Hanoi CapitalLand",
+    aliases: ["Lumi Elite"],
+    tags: ["apartment"],
+  }));
+
+  assert.equal(identity.name, "Lumi");
+  assert.equal(identity.projectName, "Lumi");
+  assert.equal(identity.buildingName, null);
+  assert.equal(identity.houseNumber, null);
+  assert.ok(identity.aliases.includes("Lumi Signature"));
+  assert.ok(identity.tags.includes("signature"));
+});
+
+test("score: different Lumi buildings and units clear auto-link against the parent project", () => {
+  const identity = resolutionIdentity(ex({
+    name: "Lumi Signature Tòa S3 Căn 1",
+    projectName: "Lumi Signature",
+    buildingName: "Tòa S3",
+    houseNumber: "Căn 1",
+    locationText: "Lumi Hanoi CapitalLand",
+  }));
+  const s = score(identity, { name: "Lumi", projectName: "Lumi", type: "apartment", attributes: null });
+  assert.ok(s >= 0.8, `expected parent-project auto-link score, got ${s}`);
 });

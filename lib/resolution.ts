@@ -3,6 +3,7 @@ import { getDb, type DbExecutor } from "../db/client";
 import { property } from "../db/schema";
 import type { PropertyExtraction } from "./extraction/schema";
 import { normalizeName, tokens, jaccard, splitNameTags, uniqueText } from "./text";
+import { projectScopedIdentity, wikiNotesForExtraction } from "./project-knowledge";
 
 /**
  * Deterministic entity resolution (design §5). Phase 1 uses blocking + weighted
@@ -60,20 +61,27 @@ export function score(
 
   // Unit labels like "Căn 1" are meaningful only with a project/building/location.
   const hasHierarchy = Boolean(extraction.projectName || extraction.buildingName || cand.projectName || cand.buildingName);
-  const identityScore = hasHierarchy
-    ? 0.42 * projectSim + 0.22 * buildingSim + 0.18 * houseSim + 0.08 * nameSim
-    : 0.72 * nameSim;
+  let identityScore: number;
+  if (isProjectLevelIdentity(extraction)) {
+    identityScore = 0.76 * projectSim + 0.14 * nameSim;
+  } else {
+    identityScore = hasHierarchy
+      ? 0.42 * projectSim + 0.22 * buildingSim + 0.18 * houseSim + 0.08 * nameSim
+      : 0.72 * nameSim;
+  }
 
   return identityScore + 0.1 * typeMatch + 0.1 * areaMatch;
 }
 
 /** Find candidate canonical properties for an extraction, ranked by score. */
 export async function findCandidates(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<Candidate[]> {
+  const identity = resolutionIdentity(extraction);
   const blockingTokens = uniqueText([
-    ...tokens(normalizeName(cleanProjectName(extraction.projectName ?? extraction.name) ?? "")),
-    ...tokens(normalizeName(extraction.buildingName ?? "")),
-    ...tokens(normalizeName(extraction.houseNumber ?? "")),
-    ...tokens(normalizeName(extraction.locationText ?? "")),
+    ...tokens(normalizeName(cleanProjectName(identity.projectName ?? identity.name) ?? "")),
+    ...tokens(normalizeName(identity.buildingName ?? "")),
+    ...tokens(normalizeName(identity.houseNumber ?? "")),
+    ...tokens(normalizeName(identity.locationText ?? "")),
+    ...identity.aliases.flatMap((alias) => tokens(normalizeName(alias))),
   ]);
   if (blockingTokens.length === 0) return [];
 
@@ -115,7 +123,7 @@ export async function findCandidates(extraction: PropertyExtraction, db: DbExecu
       houseNumber: r.houseNumber,
       type: r.type,
       addressText: r.addressText,
-      score: score(extraction, r),
+      score: score(identity, r),
     }))
     .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score)
@@ -133,18 +141,20 @@ export async function resolve(extraction: PropertyExtraction, db: DbExecutor = g
 
 /** Create a canonical property from an extraction. Returns the new id. */
 export async function createPropertyFromExtraction(extraction: PropertyExtraction, db: DbExecutor = getDb()): Promise<string> {
-  const name = displayName(extraction);
-  const projectName = cleanProjectName(extraction.projectName ?? null);
+  const identity = resolutionIdentity(extraction);
+  const name = displayName(identity);
+  const projectName = cleanProjectName(identity.projectName ?? null);
   const tags = uniqueText([
-    ...extraction.tags,
-    ...splitNameTags(extraction.name).tags,
-    ...splitNameTags(extraction.projectName).tags,
+    ...identity.tags,
+    ...splitNameTags(identity.name).tags,
+    ...splitNameTags(identity.projectName).tags,
   ]);
   const aliases = uniqueText([
-    extraction.name,
-    extraction.projectName,
-    ...extraction.aliases,
+    identity.name,
+    identity.projectName,
+    ...identity.aliases,
   ]).filter((alias) => normalizeName(alias) !== normalizeName(name ?? ""));
+  const wikiNotes = wikiNotesForExtraction(extraction);
   const [row] = await db
     .insert(property)
     .values({
@@ -152,17 +162,20 @@ export async function createPropertyFromExtraction(extraction: PropertyExtractio
       nameNormalized: name ? normalizeName(name) : null,
       projectName,
       projectNameNormalized: projectName ? normalizeName(projectName) : null,
-      buildingName: extraction.buildingName?.trim() || null,
-      buildingNameNormalized: extraction.buildingName ? normalizeName(extraction.buildingName) : null,
-      houseNumber: extraction.houseNumber?.trim() || null,
-      houseNumberNormalized: extraction.houseNumber ? normalizeName(extraction.houseNumber) : null,
+      buildingName: identity.buildingName?.trim() || null,
+      buildingNameNormalized: identity.buildingName ? normalizeName(identity.buildingName) : null,
+      houseNumber: identity.houseNumber?.trim() || null,
+      houseNumberNormalized: identity.houseNumber ? normalizeName(identity.houseNumber) : null,
       aliases: aliases.length > 0 ? aliases : null,
       tags: tags.length > 0 ? tags : null,
-      type: extraction.type,
-      addressText: extraction.locationText ?? null,
-      attributes: extraction.areaM2 != null || extraction.bedrooms != null
-        ? { areaM2: extraction.areaM2, bedrooms: extraction.bedrooms, tags }
+      type: identity.type,
+      addressText: identity.locationText ?? null,
+      attributes: isProjectLevelIdentity(identity)
+        ? { tags }
+        : identity.areaM2 != null || identity.bedrooms != null
+        ? { areaM2: identity.areaM2, bedrooms: identity.bedrooms, tags }
         : null,
+      wikiNotes,
     })
     .returning({ id: property.id });
   return row!.id;
@@ -176,6 +189,10 @@ export function displayName(extraction: PropertyExtraction): string | null {
   const cleaned = cleanProjectName(extraction.name);
   if (cleaned && !isGenericUnitName(cleaned)) return cleaned;
   return extraction.locationText?.trim() || cleaned || null;
+}
+
+export function resolutionIdentity(extraction: PropertyExtraction): PropertyExtraction {
+  return projectScopedIdentity(extraction);
 }
 
 export function cleanProjectName(raw: string | null | undefined): string | null {
@@ -192,4 +209,8 @@ function textSim(a: string | null | undefined, b: string | null | undefined): nu
 
 function isGenericUnitName(value: string): boolean {
   return /^(?:căn|can|unit|apartment|apt|nhà|nha|lô|lo|lot)\s*[\w.-]+$/iu.test(value.trim());
+}
+
+function isProjectLevelIdentity(extraction: PropertyExtraction): boolean {
+  return Boolean(extraction.projectName && !extraction.buildingName && !extraction.houseNumber);
 }
