@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { normalizeName, tokens, jaccard } from "./text";
 
 test("normalizeName: strips Vietnamese diacritics and lowercases", () => {
-  assert.equal(normalizeName("Vinhomes Quận 9"), "vinhomes quan 9");
+  assert.equal(normalizeName("Alpha Quận 9"), "alpha quan 9");
   assert.equal(normalizeName("Tòa S1.05"), "toa s1 05");
 });
 
@@ -12,7 +12,7 @@ test("normalizeName: đ/Đ maps to d", () => {
 });
 
 test("normalizeName: collapses punctuation and whitespace", () => {
-  assert.equal(normalizeName("  Lumi — Block   A!! "), "lumi block a");
+  assert.equal(normalizeName("  Alpha — Block   A!! "), "alpha block a");
 });
 
 test("tokens: keeps tokens of length >= 3", () => {

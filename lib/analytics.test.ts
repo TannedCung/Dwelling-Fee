@@ -87,9 +87,9 @@ test("areaLabel: prefers location name, else a district token from the address",
 
 test("parseFilters: validates deal and period, defaults otherwise", () => {
   assert.deepEqual(parseFilters({}), { type: "all", project: "all", building: "all", deal: "all", period: 12 });
-  assert.deepEqual(parseFilters({ type: "apartment", deal: "asking", period: "6", project: "Vinhomes" }), {
+  assert.deepEqual(parseFilters({ type: "apartment", deal: "asking", period: "6", project: "Project Alpha" }), {
     type: "apartment",
-    project: "Vinhomes",
+    project: "Project Alpha",
     building: "all",
     deal: "asking",
     period: 6,

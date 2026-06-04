@@ -45,7 +45,10 @@ export async function persistDraft(
     if (!review) {
       const decision = await resolve(p, db);
       if (decision.action === "link") { propertyId = decision.propertyId; autoLinked++; }
-      else if (decision.action === "create") { propertyId = await createPropertyFromExtraction(p, db); created++; }
+      else if (decision.action === "create") {
+        if (requiresGroundedParent(p)) review = true;
+        else { propertyId = await createPropertyFromExtraction(p, db); created++; }
+      }
       else review = true; // ambiguous match → queue for human resolution
     }
     if (review) needsReview++;
@@ -76,6 +79,10 @@ export async function persistDraft(
 
 export function shouldReviewExtraction(p: PropertyExtraction): boolean {
   return p.confidence < REVIEW_CONFIDENCE_THRESHOLD || !hasIdentity(p);
+}
+
+export function requiresGroundedParent(p: PropertyExtraction): boolean {
+  return p.type === "apartment" && Boolean(p.projectName && (p.buildingName || p.houseNumber));
 }
 
 export function derivePricePerM2(

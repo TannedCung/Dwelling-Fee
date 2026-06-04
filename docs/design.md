@@ -12,7 +12,7 @@ the easy 20%. The product succeeds or fails on three hard problems that the CRUD
 
 1. **Extraction** — turning messy, abbreviated, multilingual (Vietnamese) broker chatter into
    correct structured facts. *Garbage in, garbage everywhere.*
-2. **Entity resolution** — deciding that "Vinhomes Q9 căn 2PN tầng 12" from broker A and a web
+2. **Entity resolution** — deciding that "Project Alpha Q9 căn 2PN tầng 12" from broker A and a web
    post are the *same* property — or aren't. This is the single hardest part of the system.
 3. **Statistical honesty** — a median price/m² that silently mixes rent, asking, and transacted
    prices across an over-broad area is *confidently wrong*. The product's credibility dies here.
@@ -40,6 +40,10 @@ understand price ranges *with confidence and provenance* rather than guessing.
 
 Core organizing idea:
 > **Entity-based wiki + structured database + spatiotemporal analytics layer.**
+
+The wiki layer is deliberately structured and source-backed. See
+[`docs/wiki-grounding.md`](wiki-grounding.md) for the operating rules, including the hard rule
+that project-specific facts belong in grounded wiki data, not in code constants.
 
 ---
 
@@ -117,6 +121,11 @@ A multi-step, **durable** pipeline (one step can fail/retry without redoing the 
 Property and Location living pages: profile, aggregated observations, broker notes, external
 refs, AI summary that refreshes (cheaply, debounced) as new signals arrive. Broker **contacts**
 are their own entity (reputation, dedup, PII boundary).
+
+These pages are also the retrieval layer for entity resolution. Postgres fields such as aliases,
+tags, and wiki notes are queried before the system decides whether to link, review, or create a
+property. Specific project knowledge must be stored there with evidence rather than hardcoded in
+application logic.
 
 ### (4) Database
 Neon Postgres. Extensions: **PostGIS** (geometry), **pgvector** (entity matching / dedup).

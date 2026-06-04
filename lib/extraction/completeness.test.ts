@@ -5,7 +5,7 @@ import type { PropertyExtraction } from "./schema";
 
 function ex(over: Partial<PropertyExtraction> = {}): PropertyExtraction {
   const base: PropertyExtraction = {
-    name: "Lumi Hanoi",
+    name: "Project Alpha",
     projectName: null,
     buildingName: null,
     houseNumber: null,

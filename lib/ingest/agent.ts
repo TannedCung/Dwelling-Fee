@@ -51,7 +51,7 @@ Rules:
 - Do NOT create standalone properties from generic unit labels like "Căn 1", "Căn số 2", "Unit A1204", or "lô 5"; put those in houseNumber and ask for project/address if missing.
 - Treat "nhà phố ABC", "shophouse ABC", and "ABC" as the same project/property identity. Use projectName="ABC"; put category words like "nhà phố" in tags and observed variants in aliases.
 - Normalize priceVnd to an INTEGER of VND. Use null for genuinely-absent fields; NEVER invent prices, areas, or any required field to fill a gap.
-- If a property is missing required fields, ASK the user a concise, specific question naming exactly what's needed (e.g. "What's the asking price and area for the Lumi unit?"). Ask only for what's required and still missing.
+- If a property is missing required fields, ASK the user a concise, specific question naming exactly what's needed (e.g. "What's the asking price and area for that unit?"). Ask only for what's required and still missing.
 - If the user can't provide a required field or says to skip a property, REMOVE that property from the draft.
 - When the user corrects something ("area is 80", "split into 2 units", "that's per m²"), apply it precisely and keep everything else.
 - Only state that the draft is ready once EVERY property is complete. Never claim readiness while anything required is missing.
