@@ -36,8 +36,11 @@ export const ALLOWED_EMAIL = required("AUTH_ALLOWED_EMAILS")
   .filter(Boolean)[0]!;
 
 // Auth.js v5 names the JWT session cookie `authjs.session-token` over plain
-// http (the `__Secure-` prefix is only added on https). The cookie name is also
+// http and `__Secure-authjs.session-token` over https. The cookie name is also
 // the salt used to derive the encryption key, so encode/decode must agree on it.
-export const SESSION_COOKIE = "authjs.session-token";
+export function sessionCookieName(baseURL: string | undefined): string {
+  const protocol = new URL(baseURL ?? "http://localhost:3000").protocol;
+  return protocol === "https:" ? "__Secure-authjs.session-token" : "authjs.session-token";
+}
 
 export const STORAGE_STATE = "e2e/.auth/state.json";

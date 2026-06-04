@@ -18,6 +18,11 @@ async function createSession(request: APIRequestContext): Promise<string | null>
 }
 
 test.describe("ingest chat", () => {
+  test.skip(
+    Boolean(process.env.E2E_BASE_URL),
+    "deterministic ingest chat e2e runs only against the local MOCK_AI server",
+  );
+
   test("streams replies, gates commit on completeness, then commits", async ({ page, request }) => {
     const id = await createSession(request);
     test.skip(id === null, "database unavailable — skipping DB-dependent chat e2e");
