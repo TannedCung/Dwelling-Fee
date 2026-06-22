@@ -25,6 +25,10 @@ The repo already has a Phase 3 collection scaffold:
 - `lib/collection/run.ts` calls a source fetcher and sends each item to
   `ingestSignal()`.
 - `lib/collection/fetchers.ts` has a guarded `http` fetcher.
+- `lib/collection/internet-search.ts` provides a provider-backed internet
+  search utility for project/building research context. Agent workflows should
+  consume it through `projectInformationSearch`; every result is marked
+  `Tier 2` / unconfirmed.
 - `/collect` lets an authenticated user add sources, run them, and inspect recent
   run counts.
 

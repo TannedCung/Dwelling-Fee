@@ -55,6 +55,16 @@ Observation-level details: <fields that should stay on observations, such as uni
 7. Review or enrichment updates the correct wiki page with aliases, hierarchy notes, and evidence.
 8. Retry or commit the observation once the grounded parent exists.
 
+## Internet Search Evidence
+
+Agents may use `projectInformationSearch` to search the public internet for
+project, building, property, location, developer, or other context needed for
+grounding and review. Results from this tool are always marked
+`Tier 2` / `tier_2_unconfirmed`. They are research context only: do not treat
+them as verified facts, do not auto-link solely from them, and preserve source
+URLs, snippets, and retrieval time when copying claims into wiki notes or review
+evidence.
+
 ## Resolution Rules
 
 - A generic unit label such as `Căn 1` or `Unit 1201` is not a property identity by itself.
