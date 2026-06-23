@@ -10,6 +10,7 @@ import { google } from "@ai-sdk/google";
  * Select via env:
  *   AI_PROVIDER          = anthropic | openai | google   (default: anthropic)
  *   AI_EXTRACTION_MODEL  = optional model id override (e.g. "gpt-5.4-mini")
+ *   AI_QUERY_REWRITE_MODEL = optional cheap model override for search-query rewriting
  *
  * Provider API keys (only the selected provider's key is required):
  *   ANTHROPIC_API_KEY · OPENAI_API_KEY · GOOGLE_GENERATIVE_AI_API_KEY
@@ -26,6 +27,8 @@ const DEFAULT_EXTRACTION_MODEL: Record<Provider, string> = {
   google: "gemini-2.5-flash",
 };
 
+const DEFAULT_QUERY_REWRITE_MODEL = DEFAULT_EXTRACTION_MODEL;
+
 function resolveProvider(): Provider {
   const p = (process.env.AI_PROVIDER ?? "anthropic").toLowerCase();
   if (p === "anthropic" || p === "openai" || p === "google") return p;
@@ -40,6 +43,16 @@ export function resolveExtractionModelId(): string {
 
 export function getExtractionModel(): LanguageModel {
   return registry.languageModel(resolveExtractionModelId() as `${Provider}:${string}`);
+}
+
+export function resolveQueryRewriteModelId(): string {
+  const provider = resolveProvider();
+  const model = process.env.AI_QUERY_REWRITE_MODEL || DEFAULT_QUERY_REWRITE_MODEL[provider];
+  return `${provider}:${model}`;
+}
+
+export function getQueryRewriteModel(): LanguageModel {
+  return registry.languageModel(resolveQueryRewriteModelId() as `${Provider}:${string}`);
 }
 
 // Recorded on every observation (price_observation.extractor) for reproducibility.

@@ -1,6 +1,9 @@
+import { generateObject } from "ai";
+import { z } from "zod";
 import { and, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { getDb, type DbExecutor } from "../../db/client";
 import { building, project, property } from "../../db/schema";
+import { getQueryRewriteModel, resolveQueryRewriteModelId } from "../ai/registry";
 import {
   INTERNET_SEARCH_EVIDENCE_TIER,
   searchInternetForProjectInformation,
@@ -10,6 +13,14 @@ import { normalizeName, tokens, uniqueText } from "../text";
 import { debugEvent, type IngestDebugEvent } from "./debug";
 
 const MAX_DB_MATCHES = 8;
+
+const SearchQueryRewrite = z.object({
+  dbQuery: z.string().nullable().describe("Concise project/building/property entity query for the internal DB. Exclude price, area, sales adjectives, and unit marketing copy."),
+  internetQuery: z.string().nullable().describe("Concise web search query for public project/building context. Include project and building names when present."),
+  reason: z.string().describe("Short explanation of the selected entities and discarded noise."),
+});
+
+type SearchQueryRewrite = z.infer<typeof SearchQueryRewrite>;
 
 export interface DbGroundingMatch {
   entityType: "project" | "building" | "property";
@@ -23,6 +34,7 @@ export interface DbGroundingMatch {
 
 export interface IngestResearchContext {
   query: string | null;
+  internetQuery: string | null;
   dbMatches: DbGroundingMatch[];
   internet: InternetSearchOutput | null;
   debug: IngestDebugEvent[];
@@ -33,8 +45,19 @@ export async function gatherIngestResearchContext(
   db: DbExecutor = getDb(),
 ): Promise<IngestResearchContext> {
   const debug: IngestDebugEvent[] = [];
-  const query = buildResearchQuery(userContent);
-  debug.push(debugEvent("research.query", "ok", query ? "Built research query from broker text." : "No project/building terms found.", { query }));
+  debug.push(debugEvent("research.query", "started", "Sending broker text to query rewrite model.", {
+    textLength: userContent.length,
+  }));
+  const rewrite = await rewriteSearchQueries(userContent);
+  const query = rewrite.dbQuery;
+  const internetQuery = rewrite.internetQuery;
+  debug.push(debugEvent("research.rephrase", rewrite.method === "error" ? "error" : "ok", query || internetQuery ? "LLM rephrased broker text into DB and internet search queries." : "LLM did not find a searchable project/building identity.", {
+    method: rewrite.method,
+    model: rewrite.model,
+    dbQuery: query,
+    internetQuery,
+    reason: rewrite.reason,
+  }));
 
   let dbMatches: DbGroundingMatch[] = [];
   if (query) {
@@ -55,14 +78,14 @@ export async function gatherIngestResearchContext(
   }
 
   let internet: InternetSearchOutput | null = null;
-  if (query) {
+  if (internetQuery) {
     debug.push(debugEvent("research.internet", "started", "Searching internet for Tier 2 project/building context.", {
       tier: INTERNET_SEARCH_EVIDENCE_TIER,
-      query,
+      query: internetQuery,
     }));
     try {
       internet = await searchInternetForProjectInformation({
-        query,
+        query: internetQuery,
         purpose: "ingest grounding for project/building identity",
         limit: 5,
       });
@@ -77,11 +100,11 @@ export async function gatherIngestResearchContext(
     }
   }
 
-  return { query, dbMatches, internet, debug };
+  return { query, internetQuery, dbMatches, internet, debug };
 }
 
 export function researchPromptBlock(ctx: IngestResearchContext): string {
-  if (!ctx.query) return "";
+  if (!ctx.query && !ctx.internetQuery) return "";
   const dbLines = ctx.dbMatches.length === 0
     ? ["- No existing DB candidates found."]
     : ctx.dbMatches.map((m) => {
@@ -92,7 +115,7 @@ export function researchPromptBlock(ctx: IngestResearchContext): string {
     ? [`- No internet results available.${ctx.internet?.warnings.length ? ` Warnings: ${ctx.internet.warnings.join("; ")}` : ""}`]
     : ctx.internet.results.map((r) => `- [Tier 2 unconfirmed] ${r.title} (${r.url}): ${r.snippet.slice(0, 240)}`);
 
-  return `\n\nGROUNDING RESEARCH CONTEXT (for identity only; do not treat Tier 2 as verified facts):\nQuery: ${ctx.query}\nExisting DB candidates:\n${dbLines.join("\n")}\nInternet evidence:\n${internetLines.join("\n")}\nRules for using this context:\n- Use DB candidates and Tier 2 internet evidence to disambiguate project/building identity.\n- Do not invent prices, areas, or unit numbers from research context.\n- Do not ask which project the user means when the text plus research strongly indicates one project/building.\n- Preserve uncertainty by lowering confidence when evidence is incomplete or only Tier 2.`;
+  return `\n\nGROUNDING RESEARCH CONTEXT (for identity only; do not treat Tier 2 as verified facts):\nDB query: ${ctx.query ?? "(none)"}\nInternet query: ${ctx.internetQuery ?? "(none)"}\nExisting DB candidates:\n${dbLines.join("\n")}\nInternet evidence:\n${internetLines.join("\n")}\nRules for using this context:\n- Use DB candidates and Tier 2 internet evidence to disambiguate project/building identity.\n- Do not invent prices, areas, or unit numbers from research context.\n- Do not ask which project the user means when the text plus research strongly indicates one project/building.\n- Preserve uncertainty by lowering confidence when evidence is incomplete or only Tier 2.`;
 }
 
 async function searchExistingEntities(query: string, db: DbExecutor): Promise<DbGroundingMatch[]> {
@@ -189,34 +212,57 @@ async function searchExistingEntities(query: string, db: DbExecutor): Promise<Db
   ].slice(0, MAX_DB_MATCHES);
 }
 
-function buildResearchQuery(text: string): string | null {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  const terms = uniqueText([
-    ...matches(normalized, /(?:dự án|du an|project|khu|ở|tại|tai)\s+([\p{L}0-9][\p{L}0-9 -]{2,48})/giu),
-    ...matches(normalized, /(?:tòa|toa|tower|building|block)\s+([\p{L}0-9][\p{L}0-9 -]{2,36})/giu),
-    ...matches(normalized, /([A-ZĐ][\p{L}0-9]*(?:[ -]+[A-ZĐ][\p{L}0-9]*){0,3})/gu),
-  ])
-    .map((term) => cleanupTerm(term))
-    .filter((term) => usefulTerm(term));
+export async function rewriteSearchQueries(
+  text: string,
+): Promise<SearchQueryRewrite & { method: "llm" | "mock" | "error"; model: string }> {
+  if (process.env.MOCK_AI === "1") {
+    const query = mockRewriteQuery(text);
+    return {
+      dbQuery: query,
+      internetQuery: query,
+      reason: "MOCK_AI deterministic query rewrite.",
+      method: "mock",
+      model: "mock-query-rewrite",
+    };
+  }
 
-  if (terms.length === 0) return null;
-  return ["real estate project", ...uniqueText(terms).slice(0, 6)].join(" ");
+  const model = resolveQueryRewriteModelId();
+  try {
+    const { object } = await generateObject({
+      model: getQueryRewriteModel(),
+      schema: SearchQueryRewrite,
+      system: `You rewrite noisy Vietnamese real-estate broker text into search queries for entity grounding.
+
+Return two concise queries:
+- dbQuery: internal DB lookup query. Keep only durable names: project, development, building/tower/block, location aliases. Exclude price, area, bedrooms, balcony direction, floor, adjectives, urgency, and broker sales copy.
+- internetQuery: public web search query. Keep project/building names and add a short real-estate context term only when helpful.
+
+Rules:
+- Do not invent entities. Use null when no project/building/location identity is present.
+- Prefer the project + building combination when both are present.
+- Preserve known brand casing when clear, e.g. "Ecopark", "Park Premium".
+- Keep each query under 90 characters.`,
+      messages: [{
+        role: "user",
+        content: `Broker text:\n${text}`,
+      }],
+    });
+    return { ...object, method: "llm", model };
+  } catch (e) {
+    return {
+      dbQuery: null,
+      internetQuery: null,
+      reason: e instanceof Error ? `Query rewrite model failed: ${e.message}` : "Query rewrite model failed.",
+      method: "error",
+      model,
+    };
+  }
 }
 
-function matches(text: string, re: RegExp): string[] {
-  return Array.from(text.matchAll(re)).map((match) => match[1] ?? "").filter(Boolean);
-}
-
-function cleanupTerm(term: string): string {
-  return term
-    .replace(/[.,:;!?].*$/u, "")
-    .replace(/\b(?:căn|can|mỗi|moi|giá|gia|bán|ban|cho|thuê|thue|bao|phí|phi)\b.*$/iu, "")
-    .trim();
-}
-
-function usefulTerm(term: string): boolean {
-  const normalized = normalizeName(term);
-  if (normalized.length < 3) return false;
-  if (/^(cc|pn|vs|tl|m2|gia|ban|can|toa|tang|dong|nam|premium moi|project)$/i.test(normalized)) return false;
-  return tokens(normalized).length > 0;
+function mockRewriteQuery(text: string): string | null {
+  const normalized = normalizeName(text);
+  if (/\becopark\b/.test(normalized) && /\bpark premium\b/.test(normalized)) {
+    return "Ecopark Park Premium dự án căn hộ chung cư tòa";
+  }
+  return null;
 }
