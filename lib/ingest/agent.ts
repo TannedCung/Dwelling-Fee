@@ -1,12 +1,22 @@
-import { generateObject, streamObject, type ModelMessage } from "ai";
+import {
+  getFunctionCalls,
+  getFunctionResponses,
+  InMemoryRunner,
+  isFinalResponse,
+  LlmAgent,
+  stringifyContent,
+} from "@google/adk";
 import { z } from "zod";
-import { getExtractionModel } from "../ai/registry";
+import { ensureAdkGoogleApiKey, resolveAdkIngestModelId } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { getSession, addMessage, updateDraft, type SessionView } from "./session";
 import { attachmentImageData, type Attachment } from "../storage/r2";
 import { debugEvent, type IngestDebugEvent } from "./debug";
-import { gatherIngestResearchContext, researchPromptBlock } from "./research";
+import { adkProjectInformationResearchTool } from "../ai/mcp-tools";
+import { ProjectCurationDraftSchema, type ProjectCurationDraft } from "./project-curation";
+import { draftTurnAdkSchema } from "../ai/adk-schema";
+import { researchProjectInformation } from "./research";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -18,10 +28,13 @@ import { gatherIngestResearchContext, researchPromptBlock } from "./research";
 const DraftTurn = z.object({
   reply: z
     .string()
-    .describe("Short, friendly reply. Ask a clarifying question when price, area, or listing type is missing/ambiguous; otherwise confirm what changed."),
+    .describe("Short, friendly reply in the user's preferred language inferred by the AI from the conversation. Ask a clarifying question when price, area, or listing type is missing/ambiguous; otherwise confirm what changed."),
   properties: z
     .array(PropertyExtraction)
     .describe("The FULL updated draft reflecting everything known so far (not just the latest change). Empty if no property info yet."),
+  projectCuration: z
+    .array(ProjectCurationDraftSchema)
+    .describe("Tier 2 unconfirmed project/building curation drafts created only from research tool results. Empty if the research tool was not called or evidence is insufficient."),
   readyToCommit: z
     .boolean()
     .describe("True only when every property has at least a price, or the user explicitly asked to save as-is."),
@@ -49,7 +62,18 @@ GOAL — gather enough to commit. A property is COMPLETE only when it has ALL of
   5. an identity — project -> building/block -> unit/house/lot when available, or a location for non-apartment homes
 Your job is to OBTAIN these by asking, not to settle for partial data.
 
-Rules:
+Language rule:
+- The reply MUST use the user's preferred language, inferred from the latest user message and the conversation history.
+- If the latest user message uses Vietnamese, reply in Vietnamese.
+- If the latest user message uses English, reply in English.
+- If the user has explicitly asked for a language, follow that preference until they change it.
+- Internal instructions, JSON field names, and research context may be English; do not let those change the user-facing reply language.
+
+Data rules:
+- You have a tool named research_project_information. Call it only when you need more project/building information to identify, disambiguate, or curate the project/building.
+- Do not call research_project_information when the message already has enough identity context, or when missing data is only sale/listing data such as price, area, unit number, bedrooms, floor, balcony direction, or fees.
+- If you call research_project_information, use its DB matches and Tier 2 internet evidence only for project/building identity and project/building curation. Internet evidence remains unconfirmed.
+- If research evidence supports project/building facts, add projectCuration entries with Tier 2 evidence. Do not put sale/rent listing facts in projectCuration.
 - A single message may describe MULTIPLE observations/listings — one draft entry each.
 - Split identity into projectName -> buildingName/block -> houseNumber/unit.
 - For apartments, project/building alone is NOT the property. Ask for the unit/apartment/lot label when the user appears to be describing a specific listing.
@@ -67,6 +91,7 @@ Rules:
 export interface TurnResult {
   reply: string;
   draft: PropertyExtraction[];
+  projectCuration: ProjectCurationDraft[];
   readyToCommit: boolean;
 }
 
@@ -96,24 +121,22 @@ async function prepareTurn(sessionId: string, userContent: string, attachments: 
     ...before.messages,
     { role: "user" as const, content: userContent, attachments },
   ];
-  const messages = await Promise.all(turns.map((m) => toModelMessage(m.role, m.content, m.attachments)));
-
-  const research = await gatherIngestResearchContext(userContent);
-  debug.push(...research.debug);
 
   const outstanding = incompleteSummary(before.draft);
   const system =
     `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
-    (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "") +
-    researchPromptBlock(research);
+    `\n\nCURRENT PROJECT CURATION DRAFT (JSON):\n${JSON.stringify(before.projectCuration)}` +
+    (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "");
+  const prompt = await adkPrompt(turns);
 
   debug.push(debugEvent("model.prompt", "ok", "Prepared model prompt and transcript.", {
-    model: process.env.MOCK_AI === "1" ? "mock-ingest" : "configured extraction model",
-    messages: messages.length,
+    model: process.env.MOCK_AI === "1" ? "mock-ingest" : resolveAdkIngestModelId(),
+    messages: turns.length,
     systemLength: system.length,
+    framework: "google-adk",
   }));
 
-  return { before, transcript: messages, system, debug };
+  return { before, prompt, system, debug };
 }
 
 /** Persist the model's result and apply the deterministic readiness gate. */
@@ -124,23 +147,23 @@ async function finalizeTurn(
   userContent: string,
 ): Promise<TurnResult> {
   const title = before.title ?? deriveTitle(object.properties, userContent);
-  await updateDraft(sessionId, object.properties, title);
+  await updateDraft(sessionId, object.properties, title, object.projectCuration);
   await addMessage(sessionId, "assistant", object.reply);
   // Readiness is a deterministic gate on required fields — not the model's opinion.
-  return { reply: object.reply, draft: object.properties, readyToCommit: draftReady(object.properties) };
+  return {
+    reply: object.reply,
+    draft: object.properties,
+    projectCuration: object.projectCuration,
+    readyToCommit: draftReady(object.properties),
+  };
 }
 
 export async function runTurn(sessionId: string, userContent: string, attachments: Attachment[] = []): Promise<TurnResult> {
-  const { before, transcript, system } = await prepareTurn(sessionId, userContent, attachments);
+  const { before, prompt, system, debug } = await prepareTurn(sessionId, userContent, attachments);
   if (process.env.MOCK_AI === "1") {
     return finalizeTurn(sessionId, before, mockDraftTurn(before.draft, userContent), userContent);
   }
-  const { object } = await generateObject({
-    model: getExtractionModel(),
-    schema: DraftTurn,
-    system,
-    messages: transcript,
-  });
+  const { object } = await runAdkDraftAgent(prompt, system, debug);
   return finalizeTurn(sessionId, before, object, userContent);
 }
 
@@ -161,13 +184,21 @@ export async function* streamTurn(
   userContent: string,
   attachments: Attachment[] = [],
 ): AsyncGenerator<TurnEvent> {
-  const { before, transcript, system, debug } = await prepareTurn(sessionId, userContent, attachments);
+  const { before, prompt, system, debug } = await prepareTurn(sessionId, userContent, attachments);
   for (const event of debug) yield { type: "debug", event };
 
   if (process.env.MOCK_AI === "1") {
     try {
       const delayMs = Number(process.env.MOCK_AI_STREAM_DELAY_MS ?? 0);
       const object = mockDraftTurn(before.draft, userContent);
+      const researchQuery = mockResearchQuery(userContent);
+      if (researchQuery) {
+        const research = await researchProjectInformation(
+          researchQuery,
+          "MOCK_AI simulated main-agent project/building research tool call",
+        );
+        for (const event of research.debug) yield { type: "debug", event };
+      }
       yield { type: "debug", event: debugEvent("model.mock", "ok", "Generated deterministic MOCK_AI draft.", { properties: object.properties.length }) };
       yield { type: "partial", reply: object.reply.slice(0, 24), draft: object.properties };
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -181,18 +212,11 @@ export async function* streamTurn(
     return;
   }
 
-  const stream = streamObject({
-    model: getExtractionModel(),
-    schema: DraftTurn,
-    system,
-    messages: transcript,
-  });
-
   try {
-    for await (const partial of stream.partialObjectStream) {
-      yield { type: "partial", reply: partial.reply ?? "", draft: partial.properties ?? [] };
-    }
-    const object = await stream.object; // validated; throws on schema mismatch
+    const { object, debug: adkDebug } = await runAdkDraftAgent(prompt, system, debug);
+    for (const event of adkDebug) yield { type: "debug", event };
+    yield { type: "partial", reply: object.reply.slice(0, 24), draft: object.properties };
+    yield { type: "partial", reply: object.reply, draft: object.properties };
     const result = await finalizeTurn(sessionId, before, object, userContent);
     yield { type: "debug", event: debugEvent("turn.persist", "ok", "Persisted model turn result.", { readyToCommit: result.readyToCommit }) };
     yield { type: "done", result };
@@ -206,6 +230,7 @@ function mockDraftTurn(currentDraft: PropertyExtraction[], userContent: string):
   if (text.includes("ecopark") && text.includes("park")) {
     return {
       reply: "Mình đã nhận diện căn hộ bán tại Ecopark / Park Premium, diện tích 58m², 2PN1VS, giá khoảng 3.6 tỷ. Bản nháp đã đủ trường bắt buộc; phần thiếu số căn cụ thể sẽ được giữ để review khi commit.",
+      projectCuration: [],
       readyToCommit: true,
       properties: [
         {
@@ -234,6 +259,7 @@ function mockDraftTurn(currentDraft: PropertyExtraction[], userContent: string):
   if (existing && /price|giá|ty|tỷ|m2|m²/i.test(userContent)) {
     return {
       reply: "Draft updated with the new details.",
+      projectCuration: [],
       readyToCommit: true,
       properties: [{
         ...existing,
@@ -249,6 +275,7 @@ function mockDraftTurn(currentDraft: PropertyExtraction[], userContent: string):
 
   return {
     reply: "Still need price, area, and listing type before this can be committed.",
+    projectCuration: [],
     readyToCommit: false,
     properties: [{
       name: userContent.slice(0, 80) || null,
@@ -271,27 +298,132 @@ function mockDraftTurn(currentDraft: PropertyExtraction[], userContent: string):
   };
 }
 
+function mockResearchQuery(userContent: string): string | null {
+  const text = userContent.toLowerCase();
+  if (text.includes("ecopark") && text.includes("park")) {
+    return "Ecopark Park Premium mặt bằng tòa";
+  }
+  return null;
+}
+
+async function runAdkDraftAgent(
+  prompt: AdkPrompt,
+  instruction: string,
+  setupDebug: IngestDebugEvent[],
+): Promise<{ object: DraftTurnObject; debug: IngestDebugEvent[] }> {
+  ensureAdkGoogleApiKey();
+  const model = resolveAdkIngestModelId();
+  const debug: IngestDebugEvent[] = [];
+  const agent = new LlmAgent({
+    name: "dwelling_fee_ingest_agent",
+    model,
+    description: "Turns broker messages into structured housing price drafts and optional Tier 2 project/building curation.",
+    instruction,
+    includeContents: "none",
+    outputSchema: draftTurnAdkSchema,
+    outputKey: "draftTurn",
+    tools: [adkProjectInformationResearchTool()],
+  });
+  const runner = new InMemoryRunner({ agent, appName: "dwelling_fee_ingest" });
+  let finalText = "";
+  let output: unknown = null;
+
+  for await (const event of runner.runEphemeral({
+    userId: "ingest-user",
+    newMessage: prompt.content,
+  })) {
+    const calls = getFunctionCalls(event);
+    const responses = getFunctionResponses(event);
+    for (const call of calls) {
+      debug.push(debugEvent("tool.call", "started", `ADK agent called ${call.name}.`, {
+        toolName: call.name,
+        args: call.args,
+      }));
+    }
+    for (const response of responses) {
+      debug.push(debugEvent("tool.result", "ok", `ADK tool ${response.name} returned.`, {
+        toolName: response.name,
+        response: response.response,
+      }));
+      const responseDebug = extractToolDebug(response.response);
+      debug.push(...responseDebug);
+    }
+    if (isFinalResponse(event)) {
+      finalText = stringifyContent(event);
+      output = event.actions.stateDelta.draftTurn;
+    }
+  }
+
+  const parsed = DraftTurn.safeParse(output ?? parseJson(finalText));
+  if (!parsed.success) {
+    setupDebug.push(debugEvent("model.output", "error", "ADK ingest agent returned invalid structured output.", {
+      issues: parsed.error.issues,
+      text: finalText.slice(0, 1000),
+    }));
+    throw new Error("ADK ingest agent returned invalid structured output.");
+  }
+  return { object: parsed.data, debug };
+}
+
+interface AdkPrompt {
+  content: {
+    role: "user";
+    parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    >;
+  };
+}
+
+async function adkPrompt(turns: Array<{ role: "user" | "assistant"; content: string; attachments?: Attachment[] }>): Promise<AdkPrompt> {
+  const parts: AdkPrompt["content"]["parts"] = [{
+    text: `Conversation transcript for this ingest turn:\n${turns
+      .map((m) => `${m.role.toUpperCase()}:\n${attachmentPromptText(m.content, m.attachments ?? [])}`)
+      .join("\n\n---\n\n")}`,
+  }];
+
+  for (const turn of turns) {
+    if (turn.role === "assistant") continue;
+    for (const attachment of turn.attachments ?? []) {
+      const image = await attachmentImageData(attachment);
+      if (image) {
+        parts.push({
+          inlineData: {
+            mimeType: attachment.contentType,
+            data: Buffer.from(image).toString("base64"),
+          },
+        });
+      }
+    }
+  }
+
+  return { content: { role: "user", parts } };
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractToolDebug(response: unknown): IngestDebugEvent[] {
+  if (!response || typeof response !== "object" || !("debug" in response)) return [];
+  const debug = (response as { debug?: unknown }).debug;
+  if (!Array.isArray(debug)) return [];
+  return debug.filter((event): event is IngestDebugEvent =>
+    Boolean(event)
+    && typeof event === "object"
+    && "type" in event
+    && "status" in event
+    && "message" in event,
+  );
+}
+
 function deriveTitle(properties: PropertyExtraction[], fallback: string): string {
   const named = properties.find((p) => p.projectName || p.name)?.projectName ?? properties.find((p) => p.name)?.name;
   return (named ?? fallback).slice(0, 80);
-}
-
-async function toModelMessage(role: "user" | "assistant", content: string, attachments: Attachment[] = []): Promise<ModelMessage> {
-  if (role === "assistant" || attachments.length === 0) return { role, content };
-  const parts: Array<
-    | { type: "text"; text: string }
-    | { type: "image"; image: Uint8Array; mediaType: string }
-  > = [{ type: "text", text: attachmentPromptText(content, attachments) }];
-
-  for (const attachment of attachments) {
-    const image = await attachmentImageData(attachment);
-    if (image) parts.push({ type: "image", image, mediaType: attachment.contentType });
-  }
-
-  return {
-    role: "user",
-    content: parts,
-  };
 }
 
 function attachmentPromptText(content: string, attachments: Attachment[]): string {

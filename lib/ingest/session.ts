@@ -3,17 +3,41 @@ import { z } from "zod";
 import { getDb, type DbExecutor } from "../../db/client";
 import { ingestSession, ingestMessage, priceObservation } from "../../db/schema";
 import { PropertyExtraction } from "../extraction/schema";
+import { ProjectCurationDraftSchema, type ProjectCurationDraft } from "./project-curation";
 import { parseAttachments, persistableAttachments, type Attachment } from "../storage/r2";
 
 export type SourceType = "broker" | "web" | "agent" | "user";
 export type SessionStatus = "open" | "committed" | "abandoned";
 
 const DraftSchema = z.array(PropertyExtraction);
+const DraftStateSchema = z.object({
+  properties: z.array(PropertyExtraction),
+  projectCuration: z.array(ProjectCurationDraftSchema).optional(),
+});
+
+export interface DraftState {
+  properties: PropertyExtraction[];
+  projectCuration: ProjectCurationDraft[];
+}
 
 /** Parse the stored draft jsonb back into typed properties, tolerating null/garbage. */
 export function parseDraft(value: unknown): PropertyExtraction[] {
-  const parsed = DraftSchema.safeParse(value);
-  return parsed.success ? parsed.data : [];
+  return parseDraftState(value).properties;
+}
+
+export function parseDraftState(value: unknown): DraftState {
+  const current = DraftStateSchema.safeParse(value);
+  if (current.success) {
+    return {
+      properties: current.data.properties,
+      projectCuration: current.data.projectCuration ?? [],
+    };
+  }
+  const legacy = DraftSchema.safeParse(value);
+  return {
+    properties: legacy.success ? legacy.data : [],
+    projectCuration: [],
+  };
 }
 
 export interface SessionMessage {
@@ -30,6 +54,7 @@ export interface SessionView {
   sourceType: SourceType;
   title: string | null;
   draft: PropertyExtraction[];
+  projectCuration: ProjectCurationDraft[];
   committedAt: Date | null;
   messages: SessionMessage[];
 }
@@ -49,6 +74,7 @@ export async function getSession(id: string): Promise<SessionView | null> {
   const db = getDb();
   const s = await db.query.ingestSession.findFirst({ where: eq(ingestSession.id, id) });
   if (!s) return null;
+  const draftState = parseDraftState(s.draft);
   const messages = await db
     .select({
       id: ingestMessage.id,
@@ -65,7 +91,8 @@ export async function getSession(id: string): Promise<SessionView | null> {
     status: s.status,
     sourceType: s.sourceType,
     title: s.title,
-    draft: parseDraft(s.draft),
+    draft: draftState.properties,
+    projectCuration: draftState.projectCuration,
     committedAt: s.committedAt,
     messages: messages.map((m) => ({ ...m, attachments: parseAttachments(m.attachments) })),
   };
@@ -89,9 +116,17 @@ export async function addMessage(
   await db.update(ingestSession).set({ updatedAt: new Date() }).where(eq(ingestSession.id, sessionId));
 }
 
-export async function updateDraft(sessionId: string, draft: PropertyExtraction[], title?: string | null): Promise<void> {
+export async function updateDraft(
+  sessionId: string,
+  draft: PropertyExtraction[],
+  title?: string | null,
+  projectCuration: ProjectCurationDraft[] = [],
+): Promise<void> {
   const db = getDb();
-  const patch: { draft: PropertyExtraction[]; updatedAt: Date; title?: string } = { draft, updatedAt: new Date() };
+  const patch: { draft: DraftState; updatedAt: Date; title?: string } = {
+    draft: { properties: draft, projectCuration },
+    updatedAt: new Date(),
+  };
   if (title) patch.title = title;
   await db.update(ingestSession).set(patch).where(eq(ingestSession.id, sessionId));
 }

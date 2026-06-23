@@ -6,9 +6,12 @@ import { getSession, userSourceText, userAttachments, addMessage } from "./sessi
 import { persistDraft, type PersistResult } from "./persist";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { persistableAttachments } from "../storage/r2";
+import { commitProjectCuration } from "./project-curation";
 
 export interface CommitResult extends PersistResult {
   rawSignalId: string;
+  projectsCurated: number;
+  buildingsCurated: number;
 }
 
 /**
@@ -67,6 +70,12 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
       { rawSignalId, ingestSessionId: sessionId, sourceType: session.sourceType },
       tx,
     );
+    let curation = { projectsUpserted: 0, buildingsUpserted: 0 };
+    try {
+      curation = await commitProjectCuration(session.projectCuration, tx);
+    } catch {
+      // Tier 2 curation is supporting context; never roll back the primary observation commit for it.
+    }
 
     await tx
       .update(ingestSession)
@@ -76,10 +85,15 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
     await addMessage(
       sessionId,
       "assistant",
-      `Committed ${result.observationsCreated} observation(s): ${result.autoLinked} linked, ${result.created} new propert${result.created === 1 ? "y" : "ies"}, ${result.needsReview} sent to review.`,
+      `Committed ${result.observationsCreated} observation(s): ${result.autoLinked} linked, ${result.created} new propert${result.created === 1 ? "y" : "ies"}, ${result.needsReview} sent to review. Curated Tier 2 info for ${curation.projectsUpserted} project(s) and ${curation.buildingsUpserted} building(s).`,
       tx,
     );
 
-    return { rawSignalId, ...result };
+    return {
+      rawSignalId,
+      ...result,
+      projectsCurated: curation.projectsUpserted,
+      buildingsCurated: curation.buildingsUpserted,
+    };
   });
 }
