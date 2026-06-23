@@ -15,6 +15,14 @@ interface WorkerConfig {
   pollMs: number;
   headless: boolean;
   once: boolean;
+  // How long to keep a challenged page open so a human can solve it via VNC
+  // before giving up with needs_user_action. 0 disables the wait (headless).
+  interactiveSolveMs: number;
+}
+
+export interface InteractiveSolve {
+  timeoutMs: number;
+  heartbeat?: () => Promise<void>;
 }
 
 interface JobResponse {
@@ -192,7 +200,11 @@ async function crawlSource(
 
     await heartbeat(worker, jobId);
     await sleep(config.requestDelayMs);
-    const result = await crawlPage(context, target.url, config);
+    const solve: InteractiveSolve | undefined =
+      worker.interactiveSolveMs > 0
+        ? { timeoutMs: worker.interactiveSolveMs, heartbeat: () => heartbeat(worker, jobId) }
+        : undefined;
+    const result = await crawlPage(context, target.url, config, solve);
     pages++;
     items += result.items.length;
 
@@ -221,7 +233,7 @@ async function crawlSource(
   return { pages, items };
 }
 
-export async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig) {
+export async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig, solve?: InteractiveSolve) {
   if (!urlAllowed(url, config)) throw new Error(`URL outside allowlist: ${url.href}`);
   const page = await context.newPage();
   const started = Date.now();
@@ -229,11 +241,17 @@ export async function crawlPage(context: BrowserContext, url: URL, config: Crawl
     const response = await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: config.timeoutMs });
     await page.waitForLoadState("networkidle", { timeout: Math.min(config.timeoutMs, 15_000) }).catch(() => undefined);
     await autoScroll(page);
-    const html = await page.content();
-    const text = visibleText(html, config.maxTextChars);
+    let html = await page.content();
+    let text = visibleText(html, config.maxTextChars);
     const verdict = classifyCrawlPage(html, text, response?.status());
-    if (verdict.kind === "blocked") throw new NeedsUserAction(`Page requires user action (${verdict.reason})`);
-    if (verdict.kind === "error") throw new Error(`Page fetch failed (${verdict.reason})`);
+    if (verdict.kind === "blocked") {
+      const cleared = solve ? await waitForChallengeToClear(page, url, config, solve) : null;
+      if (!cleared) throw new NeedsUserAction(`Page requires user action (${verdict.reason})`);
+      html = cleared.html;
+      text = cleared.text;
+    } else if (verdict.kind === "error") {
+      throw new Error(`Page fetch failed (${verdict.reason})`);
+    }
     const extracted = extractPageItems(html, url, {
       itemSelector: config.itemSelector,
       contentSelector: config.contentSelector,
@@ -273,6 +291,42 @@ export async function crawlPage(context: BrowserContext, url: URL, config: Crawl
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+/**
+ * Hold a challenged page open so a human can solve the wall (e.g. a Cloudflare
+ * "Just a moment" check) over VNC. Polls the live page until it stops looking
+ * like a wall, heartbeating to keep the server-side lease alive. Returns the
+ * cleared page content, or null on timeout. Cloudflare's clearance cookie lands
+ * in the persistent profile, so later crawls reuse it until it expires.
+ */
+async function waitForChallengeToClear(
+  page: Page,
+  url: URL,
+  config: CrawlConfig,
+  solve: InteractiveSolve,
+): Promise<{ html: string; text: string } | null> {
+  const seconds = Math.round(solve.timeoutMs / 1000);
+  console.log(
+    `Challenge wall on ${url.href}. Connect a VNC viewer to localhost:5900 and solve it — ` +
+      `waiting up to ${seconds}s (auto-continues once it clears)...`,
+  );
+  const deadline = Date.now() + solve.timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    await solve.heartbeat?.().catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
+    const html = await page.content();
+    const text = visibleText(html, config.maxTextChars);
+    // Status is irrelevant after the challenge redirects to real content; judge by markup/text only.
+    if (classifyCrawlPage(html, text).kind === "ok") {
+      console.log(`Challenge cleared for ${url.href}; continuing crawl.`);
+      await autoScroll(page);
+      const settledHtml = await page.content();
+      return { html: settledHtml, text: visibleText(settledHtml, config.maxTextChars) };
+    }
+  }
+  return null;
 }
 
 async function autoScroll(page: Page) {
@@ -370,14 +424,17 @@ function readConfig(): WorkerConfig {
   const serverUrl = process.env.EDGE_SERVER_URL ?? "http://localhost:3000";
   const deviceId = requiredEnv("EDGE_DEVICE_ID");
   const secret = requiredEnv("EDGE_DEVICE_SECRET");
+  const headless = process.env.EDGE_HEADLESS === "1" || process.env.EDGE_HEADLESS === "true";
   return {
     serverUrl,
     deviceId,
     secret,
     profileDir: process.env.EDGE_PROFILE_DIR ?? path.join(process.cwd(), ".edge-profile", deviceId),
     pollMs: clamp(process.env.EDGE_POLL_MS, 10_000, 1000, 300_000),
-    headless: process.env.EDGE_HEADLESS === "1" || process.env.EDGE_HEADLESS === "true",
+    headless,
     once: process.env.EDGE_ONCE === "1" || process.env.EDGE_ONCE === "true",
+    // Headful runs default to a 5-min solve window; headless runs never wait.
+    interactiveSolveMs: clamp(process.env.EDGE_SOLVE_TIMEOUT_MS, headless ? 0 : 300_000, 0, 900_000),
   };
 }
 
