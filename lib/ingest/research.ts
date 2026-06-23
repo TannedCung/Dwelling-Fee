@@ -15,9 +15,9 @@ import { debugEvent, type IngestDebugEvent } from "./debug";
 const MAX_DB_MATCHES = 8;
 
 const SearchQueryRewrite = z.object({
-  dbQuery: z.string().nullable().describe("Concise project/building/property entity query for the internal DB. Exclude price, area, sales adjectives, and unit marketing copy."),
-  internetQuery: z.string().nullable().describe("Concise web search query for public project/building context. Include project and building names when present."),
-  reason: z.string().describe("Short explanation of the selected entities and discarded noise."),
+  dbQuery: z.string().nullable().describe("Concise same-language project/building identity query for the internal DB. Exclude price, area, sale/rent intent, unit attributes, sales adjectives, and marketing copy."),
+  internetQuery: z.string().nullable().describe("Concise same-language web search query for public project/building information such as structure, towers, master plan, layout, or sketches. Exclude sale/rent listing terms."),
+  reason: z.string().describe("Short explanation of the selected project/building information target and discarded sale/listing noise."),
 });
 
 type SearchQueryRewrite = z.infer<typeof SearchQueryRewrite>;
@@ -231,16 +231,19 @@ export async function rewriteSearchQueries(
     const { object } = await generateObject({
       model: getQueryRewriteModel(),
       schema: SearchQueryRewrite,
-      system: `You rewrite noisy Vietnamese real-estate broker text into search queries for entity grounding.
+      system: `You rewrite noisy real-estate broker text into search queries for project/building information grounding.
 
 Return two concise queries:
-- dbQuery: internal DB lookup query. Keep only durable names: project, development, building/tower/block, location aliases. Exclude price, area, bedrooms, balcony direction, floor, adjectives, urgency, and broker sales copy.
-- internetQuery: public web search query. Keep project/building names and add a short real-estate context term only when helpful.
+- dbQuery: internal DB lookup query. Keep only durable identity terms: project, development, building/tower/block, location aliases.
+- internetQuery: public web search query for information about the project/building itself: structure, towers/blocks, master plan, site plan, layout, building sketches, amenities, developer, or location context.
 
 Rules:
+- Write each query in the same language as the input text. If the input mixes languages, keep the dominant language and preserve brand/entity names exactly.
 - Do not invent entities. Use null when no project/building/location identity is present.
 - Prefer the project + building combination when both are present.
 - Preserve known brand casing when clear, e.g. "Ecopark", "Park Premium".
+- Exclude sale/rent intent and listing details: price, area, bedrooms, bathrooms, balcony direction, floor, fees, negotiability, urgency, and broker sales copy.
+- Do not add terms like "bán", "mua", "thuê", "giá", "cần bán", "listing", or "for sale".
 - Keep each query under 90 characters.`,
       messages: [{
         role: "user",
@@ -262,7 +265,7 @@ Rules:
 function mockRewriteQuery(text: string): string | null {
   const normalized = normalizeName(text);
   if (/\becopark\b/.test(normalized) && /\bpark premium\b/.test(normalized)) {
-    return "Ecopark Park Premium dự án căn hộ chung cư tòa";
+    return "Ecopark Park Premium thông tin dự án tòa nhà mặt bằng";
   }
   return null;
 }

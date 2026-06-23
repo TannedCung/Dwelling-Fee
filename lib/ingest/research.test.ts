@@ -14,6 +14,8 @@ Premium- mỗi tầng chỉ có 8 căn hộ rất riêng tư và yên bình.
   else process.env.MOCK_AI = previous;
 
   assert.equal(rewrite.method, "mock");
-  assert.equal(rewrite.dbQuery, "Ecopark Park Premium dự án căn hộ chung cư tòa");
-  assert.equal(rewrite.internetQuery, "Ecopark Park Premium dự án căn hộ chung cư tòa");
+  assert.equal(rewrite.dbQuery, "Ecopark Park Premium thông tin dự án tòa nhà mặt bằng");
+  assert.equal(rewrite.internetQuery, "Ecopark Park Premium thông tin dự án tòa nhà mặt bằng");
+  assert.ok(!rewrite.internetQuery.includes("bán"));
+  assert.ok(!rewrite.internetQuery.includes("giá"));
 });
