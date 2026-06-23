@@ -1,7 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+// patchright is a patched Playwright that removes the automation tells
+// (CDP Runtime.enable leak, navigator.webdriver, --enable-automation) that
+// Cloudflare/anti-bot vendors fingerprint. Paired with the real Chrome channel
+// (not Chrome-for-Testing) it clears far more managed challenges.
+import { chromium } from "patchright";
+import type { BrowserContext, Page } from "playwright";
 import { canonicalUrl, extractLinks, extractPageItems, visibleText } from "../lib/collection/http-fetcher";
 import { EDGE_AUTH_HEADERS, randomNonce, signEdgeRequest } from "../lib/edge/protocol";
 
@@ -131,10 +136,15 @@ export function classifyCrawlPage(html: string, text: string, httpStatus?: numbe
 async function main() {
   const config = readConfig();
   await mkdir(config.profileDir, { recursive: true });
-  const context = await chromium.launchPersistentContext(config.profileDir, {
+  // Real Google Chrome + patchright's stealth patches; viewport:null keeps the
+  // real window size so there's no headless/viewport fingerprint mismatch. The
+  // cast bridges patchright-core's nominal types to playwright's (API-identical),
+  // so crawlPage stays usable from the bundled-Chromium e2e too.
+  const context = (await chromium.launchPersistentContext(config.profileDir, {
+    channel: "chrome",
     headless: config.headless,
-    viewport: { width: 1440, height: 1000 },
-  });
+    viewport: null,
+  })) as unknown as BrowserContext;
 
   process.on("SIGINT", async () => {
     console.log("Stopping edge worker...");
