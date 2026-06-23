@@ -7,7 +7,7 @@ import {
   stringifyContent,
 } from "@google/adk";
 import { z } from "zod";
-import { ensureAdkGoogleApiKey, resolveAdkIngestModelId } from "../ai/registry";
+import { ensureAdkGoogleApiKey, getAdkIngestModel, resolveAdkIngestModelId } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { getSession, addMessage, updateDraft, type SessionView } from "./session";
@@ -311,12 +311,15 @@ async function runAdkDraftAgent(
   instruction: string,
   setupDebug: IngestDebugEvent[],
 ): Promise<{ object: DraftTurnObject; debug: IngestDebugEvent[] }> {
-  ensureAdkGoogleApiKey();
   const model = resolveAdkIngestModelId();
+  if (model.startsWith("gemini-") || model.includes("/publishers/google/models/gemini")) {
+    ensureAdkGoogleApiKey();
+  }
+  const adkModel = getAdkIngestModel();
   const debug: IngestDebugEvent[] = [];
   const agent = new LlmAgent({
     name: "dwelling_fee_ingest_agent",
-    model,
+    model: adkModel,
     description: "Turns broker messages into structured housing price drafts and optional Tier 2 project/building curation.",
     instruction,
     includeContents: "none",

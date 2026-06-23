@@ -2,6 +2,7 @@ import { createProviderRegistry, type LanguageModel } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
+import { Anthropic, OpenAI, type BaseLlm } from "adk-llm-bridge";
 
 /**
  * Multi-provider LLM layer (design §8). The extractor and any future LLM step go
@@ -10,7 +11,8 @@ import { google } from "@ai-sdk/google";
  * Select via env:
  *   AI_PROVIDER          = anthropic | openai | google   (default: anthropic)
  *   AI_EXTRACTION_MODEL  = optional model id override (e.g. "gpt-5.4-mini")
- *   ADK_INGEST_MODEL     = optional Google ADK model id for the main ingest agent
+ *   ADK_INGEST_MODEL     = optional ADK model id for the main ingest agent
+ *                         (gemini-2.5-flash, openai/gpt-4.1-mini, anthropic/claude-...)
  *
  * Provider API keys (only the selected provider's key is required):
  *   ANTHROPIC_API_KEY · OPENAI_API_KEY · GOOGLE_GENERATIVE_AI_API_KEY
@@ -26,8 +28,6 @@ const DEFAULT_EXTRACTION_MODEL: Record<Provider, string> = {
   openai: "gpt-4.1-mini",
   google: "gemini-2.5-flash",
 };
-
-const DEFAULT_ADK_INGEST_MODEL = "gemini-2.5-flash";
 
 function resolveProvider(): Provider {
   const p = (process.env.AI_PROVIDER ?? "anthropic").toLowerCase();
@@ -46,7 +46,21 @@ export function getExtractionModel(): LanguageModel {
 }
 
 export function resolveAdkIngestModelId(): string {
-  return process.env.ADK_INGEST_MODEL || process.env.GOOGLE_ADK_MODEL || DEFAULT_ADK_INGEST_MODEL;
+  if (process.env.ADK_INGEST_MODEL) return process.env.ADK_INGEST_MODEL;
+  if (process.env.GOOGLE_ADK_MODEL) return process.env.GOOGLE_ADK_MODEL;
+  const provider = resolveProvider();
+  const model = process.env.AI_EXTRACTION_MODEL || DEFAULT_EXTRACTION_MODEL[provider];
+  if (provider === "google") return model;
+  return `${provider}/${model}`;
+}
+
+export function getAdkIngestModel(): string | BaseLlm {
+  const model = resolveAdkIngestModelId();
+  if (model.startsWith("openai/")) return OpenAI(model.slice("openai/".length));
+  if (model.startsWith("openai:")) return OpenAI(model.slice("openai:".length));
+  if (model.startsWith("anthropic/")) return Anthropic(model.slice("anthropic/".length));
+  if (model.startsWith("anthropic:")) return Anthropic(model.slice("anthropic:".length));
+  return model;
 }
 
 export function ensureAdkGoogleApiKey(): void {
