@@ -497,6 +497,8 @@ table.data tbody tr:hover { background: var(--surface-2); }
 @keyframes typing-blink { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 0.9; transform: translateY(-2px); } }
 .draft-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 .draft-card { height: 100%; min-height: 0; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-sm), var(--ring-inset); overflow: hidden; display: flex; flex-direction: column; }
+.side-tabs { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-bottom: 1px solid var(--clay-soft); background: var(--surface); }
+.side-tabs .tab { justify-content: center; border: 0; cursor: pointer; min-width: 0; }
 .draft-head { padding: 15px 16px 14px; display: grid; gap: 11px; }
 .draft-head .dh-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .draft-head .dh-top strong { font: var(--text-h4); color: var(--ink); white-space: nowrap; }
@@ -525,6 +527,20 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .draft-flag.ok { color: var(--success); }
 .draft-flag svg { width: 13px; height: 13px; stroke-width: 2; }
 .commit-zone { padding: 14px 16px 16px; border-top: 1px solid var(--clay-soft); display: grid; gap: 9px; }
+.debug-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.debug-panel > .muted { margin: 4px; font: var(--text-body-sm); }
+.debug-event { background: var(--surface-2); border-radius: var(--r-md); box-shadow: var(--ring-inset); overflow: hidden; }
+.debug-event summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: auto minmax(82px, auto) minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 10px 11px; font: var(--text-caption); color: var(--ink-2); }
+.debug-event summary::-webkit-details-marker { display: none; }
+.debug-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.debug-dot.started { background: var(--clay); }
+.debug-dot.ok { background: var(--success); }
+.debug-dot.warning { background: var(--warning); }
+.debug-dot.error { background: var(--danger); }
+.debug-phase { font: var(--text-mono); font-size: 11px; color: var(--ink); white-space: nowrap; }
+.debug-message { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.debug-time { font: var(--text-mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.debug-json { margin: 0; padding: 0 11px 11px 26px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font: var(--text-mono); font-size: 11px; color: var(--ink-2); }
 .commit-summary { background: var(--success-fill); border-radius: var(--r-md); padding: 13px 14px; display: grid; gap: 9px; }
 .commit-summary .cs-head { font: var(--text-h4); color: var(--success); display: flex; align-items: center; gap: 7px; }
 .cs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

@@ -74,7 +74,7 @@ test("internet search maps Brave results and marks every result as Tier 2", asyn
   assert.equal(result.tier, INTERNET_SEARCH_EVIDENCE_TIER);
   assert.equal(result.results.length, 2);
   assert.deepEqual(calls, [
-    "https://api.search.brave.com/res/v1/web/search?q=Lumiere+Riverside+tower+address&count=2&country=VN&search_lang=en",
+    "https://api.search.brave.com/res/v1/web/search?q=Lumiere+Riverside+tower+address&count=2&country=ALL&search_lang=en",
   ]);
 
   assert.equal(result.results[0]?.title, "Lumiere Riverside");

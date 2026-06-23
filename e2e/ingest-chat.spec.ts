@@ -64,8 +64,44 @@ test.describe("ingest chat", () => {
 
     // --- Commit and confirm the success summary. ---
     await commit.click();
-    await expect(page.locator(".form-msg.ok", { hasText: "Committed" })).toBeVisible();
-    await expect(page.getByText(/obs ·.*linked.*new.*review/)).toBeVisible();
+    await expect(page.locator(".commit-summary", { hasText: "Committed" })).toBeVisible();
+    await expect(page.locator(".cs-stat", { hasText: "observations" })).toBeVisible();
+  });
+
+  test("researches project context and infers sale listing type for Ecopark broker text", async ({ page, request }) => {
+    const id = await createSession(request);
+    test.skip(id === null, "database unavailable — skipping DB-dependent chat e2e");
+
+    await page.goto(`/ingest/${id}`);
+
+    const input = page.getByRole("textbox");
+    const send = page.getByRole("button", { name: /send/i });
+    const commit = page.getByRole("button", { name: /commit/i });
+
+    await input.fill(`💎CC cần bán căn 58m2 có 2PN1VS, bán công Đông Nam tầng cao siêu thoáng, mát quanh năm. Căn hộ ở tòa Park
+Premium- mỗi tầng chỉ có 8 căn hộ rất riêng tư và yên bình.
+💰Giá bán 3.6x tỷ bao phí- đang là rẻ nhất thị trường cho căn ban công Đông Nam tòa xịn sò ở Ecopark ạ.`);
+    await send.click();
+
+    await expect(page.getByTestId("streaming-bubble")).toBeVisible();
+    await expect(page.locator(".bubble.assistant").last()).toContainText(/Ecopark/i);
+    await expect(page.locator(".bubble.assistant").last()).not.toContainText(/thuộc dự án|phân khu nào|bán hay thuê|sale or rent|which project/i);
+
+    await expect(page.locator(".draft-item")).toHaveCount(1);
+    await expect(page.locator(".di-name")).toContainText(/Ecopark.*Park Premium/i);
+    await expect(page.locator(".di-field", { hasText: "sale" })).toBeVisible();
+    await expect(page.locator(".di-field", { hasText: "asking" })).toBeVisible();
+    await expect(page.locator(".di-field", { hasText: "58 m²" })).toBeVisible();
+    await expect(page.locator(".di-field.price")).toContainText("3.600.000.000");
+    await expect(page.locator(".draft-flag.ok")).toBeVisible();
+    await expect(commit).toBeEnabled();
+
+    await page.getByRole("tab", { name: /debug/i }).click();
+    await expect(page.getByTestId("ingest-debug-panel")).toBeVisible();
+    await expect(page.getByText("research.db").first()).toBeVisible();
+    await expect(page.getByText("Searching existing project/building/property records.")).toBeVisible();
+    await expect(page.getByText("research.internet").first()).toBeVisible();
+    await expect(page.getByText(/Internet search returned \d+ Tier 2 result/).first()).toBeVisible();
   });
 
   test("rejects an empty send and keeps commit locked", async ({ page, request }) => {

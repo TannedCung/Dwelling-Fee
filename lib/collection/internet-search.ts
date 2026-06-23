@@ -6,6 +6,12 @@ export const INTERNET_SEARCH_CAVEAT =
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 10;
 const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
+const BRAVE_COUNTRIES = new Set([
+  "AR", "AU", "AT", "BE", "BR", "CA", "CL", "DK", "FI", "FR", "DE", "GR",
+  "HK", "IN", "ID", "IT", "JP", "KR", "MY", "MX", "NL", "NZ", "NO", "CN",
+  "PL", "PT", "PH", "RU", "SA", "ZA", "ES", "SE", "CH", "TW", "TR", "GB",
+  "US", "ALL",
+]);
 
 export interface InternetSearchInput {
   query: string;
@@ -144,7 +150,8 @@ function clampLimit(value: number | undefined): number {
 }
 
 function normalizeCountry(value: string | undefined): string {
-  return value?.trim().toUpperCase() || "VN";
+  const country = value?.trim().toUpperCase() || "ALL";
+  return BRAVE_COUNTRIES.has(country) ? country : "ALL";
 }
 
 function normalizeSearchLang(value: string | undefined): string {

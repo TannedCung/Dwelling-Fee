@@ -20,7 +20,17 @@ interface ChatMessage {
   createdAt?: string;
 }
 
+interface DebugEvent {
+  id: string;
+  at: string;
+  phase: string;
+  status: "started" | "ok" | "warning" | "error";
+  message: string;
+  data?: unknown;
+}
+
 type TurnEvent =
+  | { type: "debug"; event: DebugEvent }
   | { type: "partial"; reply: string; draft: unknown }
   | { type: "done"; result: { reply: string; draft: PropertyExtraction[]; readyToCommit: boolean } }
   | { type: "error"; error: string };
@@ -107,6 +117,8 @@ export function IngestChat({
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState(status === "committed");
   const [summary, setSummary] = useState<CommitSummary | null>(null);
+  const [sideTab, setSideTab] = useState<"draft" | "debug">("draft");
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const { notify } = useToast();
   const logRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -136,6 +148,17 @@ export function IngestChat({
       createdAt,
       attachments: images.map((file) => ({ filename: file.name, contentType: file.type, size: file.size })),
     }]);
+    setDebugEvents((events) => [
+      ...events,
+      {
+        id: `client-${createdAt}`,
+        at: createdAt,
+        phase: "client.send",
+        status: "started",
+        message: "Sent user message to ingest agent.",
+        data: { textLength: content.length, attachments: images.length },
+      },
+    ]);
     setSending(true);
     setStreamingReply("");
     try {
@@ -159,7 +182,9 @@ export function IngestChat({
       let lastReply = "";
       let committedTurn = false;
       for await (const event of readSse(res.body)) {
-        if (event.type === "partial") {
+        if (event.type === "debug") {
+          setDebugEvents((events) => [...events, event.event]);
+        } else if (event.type === "partial") {
           if (event.reply) lastReply = event.reply;
           setStreamingReply(event.reply);
         } else if (event.type === "done") {
@@ -371,64 +396,113 @@ export function IngestChat({
 
       <aside className="draft-panel">
         <div className="draft-card">
-          <div className="draft-head">
-            <div className="dh-top">
-              <strong>Draft</strong>
-              <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
-            </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${progress}%` }} />
-            </div>
-            <div className="progress-label">
-              <span>{completeCount}/{draft.length || 0} complete</span>
-              <span className={ready ? "ok" : undefined}>
-                {ready ? <><Icon name="check-circle" size={13} />ready to commit</> : "needs required fields"}
-              </span>
-            </div>
+          <div className="side-tabs" role="tablist" aria-label="Ingest side panel">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sideTab === "draft"}
+              className={`tab ${sideTab === "draft" ? "active" : ""}`}
+              onClick={() => setSideTab("draft")}
+            >
+              <Icon name="file-text" size={15} />
+              Draft
+              <span className="count">{draft.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sideTab === "debug"}
+              className={`tab ${sideTab === "debug" ? "active" : ""}`}
+              onClick={() => setSideTab("debug")}
+            >
+              <Icon name="bug" size={15} />
+              Debug
+              <span className="count">{debugEvents.length}</span>
+            </button>
           </div>
 
-          {draft.length === 0 ? (
-            <p className="muted" style={{ margin: "0 16px 16px" }}>Nothing yet. Paste a message to start.</p>
+          {sideTab === "draft" ? (
+            <>
+              <div className="draft-head">
+                <div className="dh-top">
+                  <strong>Draft</strong>
+                  <span className="muted">{draft.length} propert{draft.length === 1 ? "y" : "ies"}</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="progress-label">
+                  <span>{completeCount}/{draft.length || 0} complete</span>
+                  <span className={ready ? "ok" : undefined}>
+                    {ready ? <><Icon name="check-circle" size={13} />ready to commit</> : "needs required fields"}
+                  </span>
+                </div>
+              </div>
+
+              {draft.length === 0 ? (
+                <p className="muted" style={{ margin: "0 16px 16px" }}>Nothing yet. Paste a message to start.</p>
+              ) : (
+                <div className="draft-items">
+                  {draft.map((p, i) => {
+                    const missing = missingFields(p);
+                    const itemTitle = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
+                    return (
+                      <div key={i} className="draft-item">
+                        <div className="di-top">
+                          <div className="di-ico">
+                            <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="di-name">{itemTitle}</div>
+                            <div className="di-loc"><Icon name="map-pin" size={12} />{p.locationText || "No location text"}</div>
+                          </div>
+                        </div>
+                        <div className="di-fields">
+                          <span className="di-field">{p.type}</span>
+                          <span className="di-field">{p.listingType}</span>
+                          <span className="di-field">{p.dealStatus}</span>
+                          <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
+                            {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
+                          </span>
+                          <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
+                          {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
+                          {p.isNegotiable && <span className="di-field">negotiable</span>}
+                        </div>
+                        <div className="di-conf">
+                          <span>conf</span>
+                          <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
+                          <span>{(p.confidence * 100).toFixed(0)}%</span>
+                        </div>
+                        {missing.length > 0 ? (
+                          <div className="di-flag draft-flag needs"><Icon name="triangle-alert" size={13} />needs: {missing.join(", ")}</div>
+                        ) : (
+                          <div className="di-flag draft-flag ok"><Icon name="check-circle" size={13} />complete</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           ) : (
-            <div className="draft-items">
-              {draft.map((p, i) => {
-                const missing = missingFields(p);
-                const itemTitle = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean).join(" / ") || p.name || "(unnamed)";
-                return (
-                  <div key={i} className="draft-item">
-                    <div className="di-top">
-                      <div className="di-ico">
-                        <Icon name={p.type === "house" ? "home" : p.type === "land" ? "layers" : "building-2"} size={17} />
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div className="di-name">{itemTitle}</div>
-                        <div className="di-loc"><Icon name="map-pin" size={12} />{p.locationText || "No location text"}</div>
-                      </div>
-                    </div>
-                    <div className="di-fields">
-                      <span className="di-field">{p.type}</span>
-                      <span className="di-field">{p.listingType}</span>
-                      <span className="di-field">{p.dealStatus}</span>
-                      <span className={`di-field ${p.priceVnd == null ? "missing" : "price"}`}>
-                        {vnd(p.priceVnd)}{p.priceBasis === "per_m2" && "/m²"}
-                      </span>
-                      <span className={`di-field ${p.areaM2 == null ? "missing" : ""}`}>{p.areaM2 == null ? "missing area" : `${p.areaM2} m²`}</span>
-                      {p.bedrooms != null && <span className="di-field">{p.bedrooms}BR</span>}
-                      {p.isNegotiable && <span className="di-field">negotiable</span>}
-                    </div>
-                    <div className="di-conf">
-                      <span>conf</span>
-                      <span className="conf-meter"><i style={{ width: `${Math.round(p.confidence * 100)}%` }} /></span>
-                      <span>{(p.confidence * 100).toFixed(0)}%</span>
-                    </div>
-                    {missing.length > 0 ? (
-                      <div className="di-flag needs"><Icon name="triangle-alert" size={13} />needs: {missing.join(", ")}</div>
-                    ) : (
-                      <div className="di-flag ok"><Icon name="check-circle" size={13} />complete</div>
+            <div className="debug-panel" data-testid="ingest-debug-panel">
+              {debugEvents.length === 0 ? (
+                <p className="muted">No debug events yet. Send a message to see agent traces.</p>
+              ) : (
+                debugEvents.map((event) => (
+                  <details key={event.id} className={`debug-event ${event.status}`} open={event.status === "error" || event.status === "warning"}>
+                    <summary>
+                      <span className={`debug-dot ${event.status}`} />
+                      <span className="debug-phase">{event.phase}</span>
+                      <span className="debug-message">{event.message}</span>
+                      <span className="debug-time">{timeLabel(event.at)}</span>
+                    </summary>
+                    {event.data !== undefined && (
+                      <pre className="debug-json">{JSON.stringify(event.data, null, 2)}</pre>
                     )}
-                  </div>
-                );
-              })}
+                  </details>
+                ))
+              )}
             </div>
           )}
 
