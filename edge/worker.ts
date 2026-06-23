@@ -34,7 +34,7 @@ interface JobResponse {
   };
 }
 
-interface CrawlConfig {
+export interface CrawlConfig {
   allowedDomains: string[];
   maxPages: number;
   maxDepth: number;
@@ -49,11 +49,75 @@ interface CrawlConfig {
   maxTextChars: number;
 }
 
-class NeedsUserAction extends Error {
+export class NeedsUserAction extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NeedsUserAction";
   }
+}
+
+// Human-readable interstitial copy that means a person must act (solve a CAPTCHA,
+// sign in, pass a Cloudflare/anti-bot challenge). Matched against VISIBLE text.
+const USER_ACTION_TEXT_PATTERNS = [
+  "captcha",
+  "verify you are human",
+  "verify you are not a robot",
+  "are you a human",
+  "unusual traffic",
+  "access denied",
+  "sign in to continue",
+  "login to continue",
+  "just a moment",
+  "performing security verification",
+  "checking your browser before accessing",
+  "needs to review the security of your connection",
+  "enable javascript and cookies to continue",
+  "ddos protection by",
+  "đăng nhập để tiếp tục",
+  "xác minh bạn không phải",
+  "vui lòng xác minh",
+];
+
+// Cloudflare / Akamai anti-bot machinery left in the HTML even when the visible
+// copy is sparse. Matched against raw HTML so we still catch silent challenges.
+const USER_ACTION_HTML_PATTERNS = [
+  "cf-browser-verification",
+  "cf_chl_opt",
+  "/cdn-cgi/challenge-platform",
+  "challenge-platform",
+  "__cf_chl",
+  "_incapsula_resource",
+];
+
+export type CrawlVerdict =
+  | { kind: "ok" }
+  | { kind: "blocked"; reason: string }
+  | { kind: "error"; reason: string };
+
+/**
+ * Decide whether a fetched page is real content, a bot/auth wall that needs a
+ * human (NeedsUserAction), or a transport error. A blocked or errored page must
+ * never be ingested — the challenge/error text is not a listing and only creates
+ * junk raw signals with zero observations.
+ */
+export function classifyCrawlPage(html: string, text: string, httpStatus?: number): CrawlVerdict {
+  const haystackText = text.toLowerCase();
+  const textWall = USER_ACTION_TEXT_PATTERNS.find((pattern) => haystackText.includes(pattern));
+  if (textWall) return { kind: "blocked", reason: `bot/auth wall: ${textWall}` };
+
+  const haystackHtml = html.toLowerCase();
+  const htmlWall = USER_ACTION_HTML_PATTERNS.find((pattern) => haystackHtml.includes(pattern));
+  if (htmlWall) return { kind: "blocked", reason: `anti-bot challenge: ${htmlWall}` };
+
+  if (httpStatus !== undefined) {
+    // 401/403/429 from a bot-protected site without recognizable challenge copy
+    // still means "a human needs to open this in a real session".
+    if (httpStatus === 401 || httpStatus === 403 || httpStatus === 429) {
+      return { kind: "blocked", reason: `HTTP ${httpStatus}` };
+    }
+    if (httpStatus >= 400) return { kind: "error", reason: `HTTP ${httpStatus}` };
+  }
+  return { kind: "ok" };
 }
 
 async function main() {
@@ -157,7 +221,7 @@ async function crawlSource(
   return { pages, items };
 }
 
-async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig) {
+export async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig) {
   if (!urlAllowed(url, config)) throw new Error(`URL outside allowlist: ${url.href}`);
   const page = await context.newPage();
   const started = Date.now();
@@ -167,7 +231,9 @@ async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig)
     await autoScroll(page);
     const html = await page.content();
     const text = visibleText(html, config.maxTextChars);
-    assertNoUserActionWall(text);
+    const verdict = classifyCrawlPage(html, text, response?.status());
+    if (verdict.kind === "blocked") throw new NeedsUserAction(`Page requires user action (${verdict.reason})`);
+    if (verdict.kind === "error") throw new Error(`Page fetch failed (${verdict.reason})`);
     const extracted = extractPageItems(html, url, {
       itemSelector: config.itemSelector,
       contentSelector: config.contentSelector,
@@ -218,22 +284,6 @@ async function autoScroll(page: Page) {
   });
 }
 
-function assertNoUserActionWall(text: string) {
-  const lower = text.toLowerCase();
-  const blocked = [
-    "captcha",
-    "verify you are human",
-    "unusual traffic",
-    "access denied",
-    "sign in to continue",
-    "login to continue",
-    "đăng nhập để tiếp tục",
-    "xác minh bạn không phải",
-  ];
-  const found = blocked.find((pattern) => lower.includes(pattern));
-  if (found) throw new NeedsUserAction(`Page requires user action: ${found}`);
-}
-
 async function heartbeat(config: WorkerConfig, currentJobId: string | null) {
   await signedFetch(config, "/api/edge/worker/heartbeat", { version: VERSION, currentJobId });
 }
@@ -282,7 +332,7 @@ async function signedFetch(config: WorkerConfig, pathName: string, bodyValue: un
   return data;
 }
 
-function parseCrawlConfig(startUrl: string, raw: Record<string, unknown> | null): CrawlConfig {
+export function parseCrawlConfig(startUrl: string, raw: Record<string, unknown> | null): CrawlConfig {
   const input = raw ?? {};
   const seed = new URL(startUrl);
   const allowedDomains = new Set<string>([seed.hostname.toLowerCase()]);
@@ -370,7 +420,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
