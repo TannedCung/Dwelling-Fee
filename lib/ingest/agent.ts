@@ -6,7 +6,6 @@ import {
   LlmAgent,
   stringifyContent,
 } from "@google/adk";
-import { FunctionCallingConfigMode } from "@google/genai";
 import { z } from "zod";
 import { ensureAdkGoogleApiKey, getAdkIngestModel, resolveAdkIngestModelId } from "../ai/registry";
 import { PropertyExtraction } from "../extraction/schema";
@@ -16,8 +15,8 @@ import { attachmentImageData, type Attachment } from "../storage/r2";
 import { debugEvent, type IngestDebugEvent } from "./debug";
 import { adkProjectInformationResearchTool } from "../ai/mcp-tools";
 import { ProjectCurationDraftSchema, type ProjectCurationDraft } from "./project-curation";
-import { researchProjectInformation, type IngestResearchContext } from "./research";
-import { normalizeName } from "../text";
+import { draftTurnAdkSchema } from "../ai/adk-schema";
+import { researchProjectInformation } from "./research";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -71,8 +70,8 @@ Language rule:
 - Internal instructions, JSON field names, and research context may be English; do not let those change the user-facing reply language.
 
 Data rules:
-- You have a tool named research_project_information. Use it when project/building context would help identify, disambiguate, or curate the project/building.
-- If the latest user message names a project, building, tower, block, or compound (for example "Ecopark", "Park Premium", "Masteri", "Lumi", "S1", "The Opera"), call research_project_information before finalizing the draft unless the current project curation draft already contains evidence for that exact named project/building.
+- You have a tool named research_project_information. Use it when project/building context would help you identify, disambiguate, or curate the project/building.
+- Broker messages often mention project/building names informally. When the latest user message names a project, building, tower, block, compound, or known development alias (for example "Ecopark", "Park Premium", "Masteri", "Lumi", "S1", "The Opera"), strongly consider calling research_project_information before finalizing the draft so you can ground the project/building context instead of asking the user to confirm what was already named.
 - Use a same-language query focused only on project/building context, such as "<project> <building> mặt bằng tòa tiện ích chủ đầu tư" for Vietnamese input. Do not include sale/rent price, area, bedrooms, floor, balcony direction, or fees in the research query.
 - If research finds one plausible project/building match, use it as Tier 2 context and do NOT ask the user to confirm the named project. Ask which project only when the message lacks a project/building name or research returns multiple plausible matches that cannot be resolved from the user's text.
 - If you call research_project_information, use its DB matches and Tier 2 internet evidence only for project/building identity and project/building curation. Internet evidence remains unconfirmed.
@@ -89,14 +88,7 @@ Data rules:
 - If the user can't provide a required field or says to skip a property, REMOVE that property from the draft.
 - When the user corrects something ("area is 80", "split into 2 units", "that's per m²"), apply it precisely and keep everything else.
 - Only state that the draft is ready once EVERY property is complete. Never claim readiness while anything required is missing.
-- Be concise: at most one or two questions per turn. Lower confidence for ambiguous properties.
-
-Response format:
-- Return ONLY one JSON object, no markdown, no prose outside JSON.
-- The JSON object MUST have keys: reply, properties, projectCuration, readyToCommit.
-- properties is the full updated array of property drafts.
-- projectCuration is the full updated array of Tier 2 project/building curation drafts created from research_project_information results.
-- Use null for unknown nullable fields, [] for empty arrays, and "unknown" for unknown enum fields.`;
+- Be concise: at most one or two questions per turn. Lower confidence for ambiguous properties.`;
 
 export interface TurnResult {
   reply: string;
@@ -180,7 +172,7 @@ export async function runTurn(sessionId: string, userContent: string, attachment
   if (process.env.MOCK_AI === "1") {
     return finalizeTurn(sessionId, before, mockDraftTurn(before.draft, userContent), userContent);
   }
-  const { object } = await runAdkDraftAgent(prompt, system, debug, before.projectCuration);
+  const { object } = await runAdkDraftAgent(prompt, system, debug);
   return finalizeTurn(sessionId, before, object, userContent);
 }
 
@@ -230,7 +222,7 @@ export async function* streamTurn(
   }
 
   try {
-    const { object, debug: adkDebug } = await runAdkDraftAgent(prompt, system, debug, before.projectCuration);
+    const { object, debug: adkDebug } = await runAdkDraftAgent(prompt, system, debug);
     for (const event of adkDebug) yield { type: "debug", event };
     yield { type: "partial", reply: object.reply.slice(0, 24), draft: object.properties };
     yield { type: "partial", reply: object.reply, draft: object.properties };
@@ -330,7 +322,6 @@ async function runAdkDraftAgent(
   prompt: AdkPrompt,
   instruction: string,
   setupDebug: IngestDebugEvent[],
-  existingProjectCuration: ProjectCurationDraft[],
 ): Promise<{ object: DraftTurnObject; debug: IngestDebugEvent[] }> {
   const model = resolveAdkIngestModelId();
   if (model.startsWith("gemini-") || model.includes("/publishers/google/models/gemini")) {
@@ -340,36 +331,18 @@ async function runAdkDraftAgent(
   let retryPrompt = prompt;
   let lastIssues: unknown = null;
   let lastText = "";
-  let forceResearchTool = false;
 
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    const result = await runAdkDraftAgentAttempt(retryPrompt, instruction, forceResearchTool);
-    forceResearchTool = false;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const result = await runAdkDraftAgentAttempt(retryPrompt, instruction);
     debug.push(...result.debug);
     lastText = result.finalText;
-    const candidate = typeof result.output === "string"
-      ? parseJson(result.output)
-      : result.output ?? parseJson(result.finalText);
+    const candidate = result.output ?? parseJson(result.finalText);
     const parsed = DraftTurn.safeParse(normalizeDraftTurnCandidate(candidate));
     if (parsed.success) {
-      const object = groundProjectCuration(parsed.data, result.research);
-      const policyIssue = outputPolicyIssue(object, existingProjectCuration, result.debug);
-      if (policyIssue) {
-        lastIssues = policyIssue;
-        debug.push(debugEvent("model.output", attempt === 4 ? "error" : "warning", policyIssue.message, {
-          attempt,
-          issue: policyIssue,
-          text: result.finalText.slice(0, 1000),
-          stateDelta: result.output,
-        }));
-        retryPrompt = policyRepairPrompt(prompt, object, policyIssue);
-        forceResearchTool = policyIssue.code === "missing_project_research" || policyIssue.code === "ungrounded_project_curation";
-        continue;
-      }
       if (attempt > 1) {
         debug.push(debugEvent("model.output", "ok", "ADK ingest agent returned valid structured output after retry.", { attempt }));
       }
-      return { object, debug };
+      return { object: parsed.data, debug };
     }
 
     lastIssues = parsed.error.issues;
@@ -394,31 +367,17 @@ async function runAdkDraftAgent(
 async function runAdkDraftAgentAttempt(
   prompt: AdkPrompt,
   instruction: string,
-  forceResearchTool: boolean,
-): Promise<{ output: unknown; finalText: string; debug: IngestDebugEvent[]; research: IngestResearchContext[] }> {
+): Promise<{ output: unknown; finalText: string; debug: IngestDebugEvent[] }> {
   const adkModel = getAdkIngestModel();
   const debug: IngestDebugEvent[] = [];
-  const research: IngestResearchContext[] = [];
   const agent = new LlmAgent({
     name: "dwelling_fee_ingest_agent",
     model: adkModel,
     description: "Turns broker messages into structured housing price drafts and optional Tier 2 project/building curation.",
     instruction,
     includeContents: "none",
-    beforeModelCallback: forceResearchTool
-      ? ({ request }) => {
-          request.config ??= {};
-          request.config.toolConfig = {
-            functionCallingConfig: hasResearchToolResponse(request.contents)
-              ? { mode: FunctionCallingConfigMode.NONE }
-              : {
-                  mode: FunctionCallingConfigMode.ANY,
-                  allowedFunctionNames: ["research_project_information"],
-                },
-          };
-          return undefined;
-        }
-      : undefined,
+    outputSchema: draftTurnAdkSchema,
+    outputKey: "draftTurn",
     tools: [adkProjectInformationResearchTool()],
   });
   const runner = new InMemoryRunner({ agent, appName: "dwelling_fee_ingest" });
@@ -442,8 +401,6 @@ async function runAdkDraftAgentAttempt(
         toolName: response.name,
         response: response.response,
       }));
-      const researchContext = extractResearchContext(response.response);
-      if (researchContext) research.push(researchContext);
       const responseDebug = extractToolDebug(response.response);
       debug.push(...responseDebug);
     }
@@ -453,7 +410,7 @@ async function runAdkDraftAgentAttempt(
     }
   }
 
-  return { output, finalText, debug, research };
+  return { output, finalText, debug };
 }
 
 interface AdkPrompt {
@@ -492,29 +449,11 @@ async function adkPrompt(turns: Array<{ role: "user" | "assistant"; content: str
 }
 
 function parseJson(text: string): unknown {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const candidates = [
-    trimmed,
-    fenced?.[1],
-    jsonObjectSlice(trimmed),
-  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // Try the next common model wrapper form.
-    }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
-  return null;
-}
-
-function jsonObjectSlice(text: string): string | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  return text.slice(start, end + 1);
 }
 
 export function normalizeDraftTurnCandidate(value: unknown): unknown {
@@ -583,219 +522,13 @@ function repairPrompt(
             "Use null for unknown nullable fields such as name, projectName, buildingName, houseNumber, locationText, priceVnd, areaM2, bedrooms. " +
             "Use [] for aliases, tags, projectCuration, facts, and evidence when empty. " +
             "Use enum value \"unknown\" when an enum field is unknown.\n\n" +
-            `Validation issues:\n${safeJson(issues).slice(0, 2000)}\n\n` +
-            `Previous stateDelta:\n${safeJson(output).slice(0, 3000)}\n\n` +
+            `Validation issues:\n${JSON.stringify(issues).slice(0, 2000)}\n\n` +
+            `Previous stateDelta:\n${JSON.stringify(output).slice(0, 3000)}\n\n` +
             `Previous text:\n${finalText.slice(0, 3000)}`,
         },
       ],
     },
   };
-}
-
-interface OutputPolicyIssue {
-  code: "missing_project_research" | "ungrounded_project_curation" | "ready_draft_clarifying_question";
-  message: string;
-  details: unknown;
-}
-
-function outputPolicyIssue(
-  object: DraftTurnObject,
-  existingProjectCuration: ProjectCurationDraft[],
-  attemptDebug: IngestDebugEvent[],
-): OutputPolicyIssue | null {
-  const needsResearch = object.properties.some((property) =>
-    hasProjectContext(property) && !hasExistingCurationEvidence(property, existingProjectCuration),
-  );
-  if (needsResearch && !calledResearchTool(attemptDebug)) {
-    return {
-      code: "missing_project_research",
-      message: "ADK ingest agent skipped required project/building research.",
-      details: {
-        properties: object.properties.map((property) => ({
-          projectName: property.projectName,
-          buildingName: property.buildingName,
-        })),
-      },
-    };
-  }
-
-  const ungroundedCuration = object.projectCuration.filter((draft) => !hasCurationEvidence(draft));
-  if (ungroundedCuration.length > 0) {
-    return {
-      code: "ungrounded_project_curation",
-      message: "ADK ingest agent returned project curation without Tier 2 evidence.",
-      details: {
-        projectCuration: ungroundedCuration.map((draft) => ({
-          projectName: draft.projectName,
-          buildingName: draft.buildingName,
-          searchQuery: draft.searchQuery,
-        })),
-      },
-    };
-  }
-
-  if (draftReady(object.properties) && object.reply.includes("?")) {
-    return {
-      code: "ready_draft_clarifying_question",
-      message: "ADK ingest agent asked a clarifying question after the draft was complete.",
-      details: {
-        reply: object.reply,
-      },
-    };
-  }
-
-  return null;
-}
-
-function policyRepairPrompt(
-  original: AdkPrompt,
-  output: DraftTurnObject,
-  issue: OutputPolicyIssue,
-): AdkPrompt {
-  const instruction =
-    issue.code === "missing_project_research"
-      ? "You returned project/building fields but did not call research_project_information. Call research_project_information now with a same-language project/building query, then return the full corrected JSON object only."
-      : issue.code === "ungrounded_project_curation"
-        ? "You returned projectCuration without real Tier 2 internet evidence. Call research_project_information now and include only evidence copied from returned internet.results title/url/snippet/source/tier fields. Do not invent DB evidence. If there is no returned internet URL, set projectCuration to []. Return the full corrected JSON object only."
-        : "The draft has all required fields. Do not ask for exact masked price digits, floor, unit number, or other optional details. Return a concise same-language confirmation that the draft is ready, with the full corrected JSON object only.";
-
-  return {
-    content: {
-      role: "user",
-      parts: [
-        ...original.content.parts,
-        {
-          text:
-            `${instruction}\n\n` +
-            `Policy issue:\n${safeJson(issue).slice(0, 2000)}\n\n` +
-            `Previous validated JSON:\n${safeJson(output).slice(0, 4000)}`,
-        },
-      ],
-    },
-  };
-}
-
-function hasResearchToolResponse(contents: unknown[]): boolean {
-  return contents.some((content) => {
-    if (!plainObject(content) || !Array.isArray(content.parts)) return false;
-    return content.parts.some((part) => {
-      if (!plainObject(part) || !plainObject(part.functionResponse)) return false;
-      return part.functionResponse.name === "research_project_information";
-    });
-  });
-}
-
-function groundProjectCuration(object: DraftTurnObject, research: IngestResearchContext[]): DraftTurnObject {
-  const evidence = research
-    .flatMap((context) =>
-      (context.internet?.results ?? []).map((result) => ({
-        title: result.title,
-        url: result.url,
-        snippet: result.snippet,
-        source: result.source,
-        tier: result.tier,
-      })),
-    )
-    .filter((item) => item.tier === "tier_2_unconfirmed" && /^https?:\/\//i.test(item.url));
-  const groundedCuration = object.projectCuration.filter(hasCurationEvidence);
-  if (evidence.length === 0) {
-    return { ...object, projectCuration: groundedCuration };
-  }
-
-  const contextsNewestFirst = [...research].reverse();
-  const searchQuery = contextsNewestFirst.find((context) => context.internetQuery || context.query)?.internetQuery
-    ?? contextsNewestFirst.find((context) => context.query)?.query
-    ?? null;
-  const byKey = new Map<string, ProjectCurationDraft>();
-  for (const draft of groundedCuration) {
-    byKey.set(curationKey(draft.projectName, draft.buildingName), draft);
-  }
-  for (const property of object.properties) {
-    if (!hasProjectContext(property)) continue;
-    const key = curationKey(property.projectName, property.buildingName);
-    if (byKey.has(key)) continue;
-    byKey.set(key, {
-      projectName: property.projectName,
-      buildingName: property.buildingName,
-      aliases: [],
-      tags: [],
-      addressText: null,
-      wikiNotes: null,
-      facts: [],
-      evidence: evidence.slice(0, 5),
-      searchQuery,
-      model: resolveAdkIngestModelId(),
-    });
-  }
-
-  return { ...object, projectCuration: [...byKey.values()] };
-}
-
-function curationKey(projectName: string | null, buildingName: string | null): string {
-  return `${normalizeName(projectName ?? "")}::${normalizeName(buildingName ?? "")}`;
-}
-
-function extractResearchContext(response: unknown): IngestResearchContext | null {
-  for (const container of researchContextContainers(response)) {
-    if (isResearchContext(container)) return container;
-  }
-  return null;
-}
-
-function researchContextContainers(value: unknown): unknown[] {
-  if (!plainObject(value)) return [];
-  return [
-    value,
-    ...("result" in value ? researchContextContainers(value.result) : []),
-    ...("response" in value ? researchContextContainers(value.response) : []),
-  ];
-}
-
-function isResearchContext(value: unknown): value is IngestResearchContext {
-  return (
-    plainObject(value) &&
-    ("query" in value || "internetQuery" in value) &&
-    Array.isArray(value.dbMatches) &&
-    Array.isArray(value.debug) &&
-    "internet" in value
-  );
-}
-
-function hasProjectContext(property: PropertyExtraction): boolean {
-  return Boolean(property.projectName?.trim() || property.buildingName?.trim());
-}
-
-function hasExistingCurationEvidence(
-  property: PropertyExtraction,
-  existingProjectCuration: ProjectCurationDraft[],
-): boolean {
-  const projectKey = normalizeName(property.projectName ?? "");
-  const buildingKey = normalizeName(property.buildingName ?? "");
-  if (!projectKey && !buildingKey) return false;
-  return existingProjectCuration.some((draft) => {
-    if (!hasCurationEvidence(draft)) return false;
-    const draftProjectKey = normalizeName(draft.projectName ?? "");
-    const draftBuildingKey = normalizeName(draft.buildingName ?? "");
-    const projectMatches = !projectKey || draftProjectKey === projectKey;
-    const buildingMatches = !buildingKey || draftBuildingKey === buildingKey;
-    return projectMatches && buildingMatches;
-  });
-}
-
-function hasCurationEvidence(draft: ProjectCurationDraft): boolean {
-  return draft.evidence.some((item) => item.tier === "tier_2_unconfirmed" && /^https?:\/\//i.test(item.url));
-}
-
-function calledResearchTool(debug: IngestDebugEvent[]): boolean {
-  return debug.some((event) => {
-    if (event.phase !== "tool.call" || !plainObject(event.data)) return false;
-    return event.data.toolName === "research_project_information";
-  });
-}
-
-function safeJson(value: unknown): string {
-  const text = JSON.stringify(value);
-  return text === undefined ? "undefined" : text;
 }
 
 function nullableString(value: unknown): string | null {
@@ -824,30 +557,15 @@ function boundedConfidence(value: unknown): number {
 }
 
 function extractToolDebug(response: unknown): IngestDebugEvent[] {
-  return toolDebugContainers(response).flatMap((container) => {
-    const debug = container.debug;
-    if (!Array.isArray(debug)) return [];
-    return debug.filter(isIngestDebugEvent);
-  });
-}
-
-function toolDebugContainers(value: unknown): Array<{ debug: unknown }> {
-  if (!plainObject(value)) return [];
-  const containers: Array<{ debug: unknown }> = [];
-  if ("debug" in value) containers.push(value as { debug: unknown });
-  if ("result" in value) containers.push(...toolDebugContainers(value.result));
-  if ("response" in value) containers.push(...toolDebugContainers(value.response));
-  return containers;
-}
-
-function isIngestDebugEvent(event: unknown): event is IngestDebugEvent {
-  return (
-    plainObject(event) &&
-    typeof event.id === "string" &&
-    typeof event.at === "string" &&
-    typeof event.phase === "string" &&
-    typeof event.message === "string" &&
-    (event.status === "started" || event.status === "ok" || event.status === "warning" || event.status === "error")
+  if (!response || typeof response !== "object" || !("debug" in response)) return [];
+  const debug = (response as { debug?: unknown }).debug;
+  if (!Array.isArray(debug)) return [];
+  return debug.filter((event): event is IngestDebugEvent =>
+    Boolean(event)
+    && typeof event === "object"
+    && "type" in event
+    && "status" in event
+    && "message" in event,
   );
 }
 

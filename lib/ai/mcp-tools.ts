@@ -20,7 +20,7 @@ export const projectInformationResearchMcp = {
   description:
     "Search existing DB records and the public internet for project/building context only. " +
     "Use this when the main ingest agent needs more information to identify, disambiguate, or curate a project/building. " +
-    "For broker messages that name a project, building, tower, block, or compound, use this before finalizing the draft unless the current curation draft already has evidence for that exact entity. " +
+    "This is especially useful when a broker message names a project, building, tower, block, compound, or development alias and the agent should ground that context before asking the user for clarification. " +
     "Returned internet evidence is Tier 2 / unconfirmed and must not be treated as verified fact. " +
     "Do not use it for sale/rent listing facts such as price, unit area, bedrooms, floor, balcony direction, or fees.",
   inputSchema: ProjectInformationResearchInput,
