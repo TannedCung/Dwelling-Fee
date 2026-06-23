@@ -97,6 +97,13 @@ export interface TurnResult {
 
 type DraftTurnObject = z.infer<typeof DraftTurn>;
 
+class IngestAgentOutputError extends Error {
+  constructor(message: string, readonly debug: IngestDebugEvent[]) {
+    super(message);
+    this.name = "IngestAgentOutputError";
+  }
+}
+
 /**
  * Shared turn setup: validate the session, persist the user message (so it's never
  * lost if the model call fails), and assemble the prompt. Used by both the one-shot
@@ -221,6 +228,9 @@ export async function* streamTurn(
     yield { type: "debug", event: debugEvent("turn.persist", "ok", "Persisted model turn result.", { readyToCommit: result.readyToCommit }) };
     yield { type: "done", result };
   } catch (e) {
+    if (e instanceof IngestAgentOutputError) {
+      for (const event of e.debug) yield { type: "debug", event };
+    }
     yield { type: "error", error: e instanceof Error ? e.message : "turn failed" };
   }
 }
@@ -315,6 +325,47 @@ async function runAdkDraftAgent(
   if (model.startsWith("gemini-") || model.includes("/publishers/google/models/gemini")) {
     ensureAdkGoogleApiKey();
   }
+  const debug: IngestDebugEvent[] = [];
+  let retryPrompt = prompt;
+  let lastIssues: unknown = null;
+  let lastText = "";
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const result = await runAdkDraftAgentAttempt(retryPrompt, instruction);
+    debug.push(...result.debug);
+    lastText = result.finalText;
+    const candidate = result.output ?? parseJson(result.finalText);
+    const parsed = DraftTurn.safeParse(normalizeDraftTurnCandidate(candidate));
+    if (parsed.success) {
+      if (attempt > 1) {
+        debug.push(debugEvent("model.output", "ok", "ADK ingest agent returned valid structured output after retry.", { attempt }));
+      }
+      return { object: parsed.data, debug };
+    }
+
+    lastIssues = parsed.error.issues;
+    debug.push(debugEvent("model.output", attempt === 1 ? "warning" : "error", "ADK ingest agent returned invalid structured output.", {
+      attempt,
+      issues: parsed.error.issues,
+      text: result.finalText.slice(0, 1000),
+      stateDelta: result.output,
+    }));
+    retryPrompt = repairPrompt(prompt, result.output, result.finalText, parsed.error.issues);
+  }
+
+  const finalDebug = debugEvent("model.output", "error", "ADK ingest agent returned invalid structured output after retry.", {
+    issues: lastIssues,
+    text: lastText.slice(0, 1000),
+  });
+  setupDebug.push(finalDebug);
+  debug.push(finalDebug);
+  throw new IngestAgentOutputError("ADK ingest agent returned invalid structured output.", debug);
+}
+
+async function runAdkDraftAgentAttempt(
+  prompt: AdkPrompt,
+  instruction: string,
+): Promise<{ output: unknown; finalText: string; debug: IngestDebugEvent[] }> {
   const adkModel = getAdkIngestModel();
   const debug: IngestDebugEvent[] = [];
   const agent = new LlmAgent({
@@ -357,15 +408,7 @@ async function runAdkDraftAgent(
     }
   }
 
-  const parsed = DraftTurn.safeParse(output ?? parseJson(finalText));
-  if (!parsed.success) {
-    setupDebug.push(debugEvent("model.output", "error", "ADK ingest agent returned invalid structured output.", {
-      issues: parsed.error.issues,
-      text: finalText.slice(0, 1000),
-    }));
-    throw new Error("ADK ingest agent returned invalid structured output.");
-  }
-  return { object: parsed.data, debug };
+  return { output, finalText, debug };
 }
 
 interface AdkPrompt {
@@ -411,6 +454,106 @@ function parseJson(text: string): unknown {
   }
 }
 
+export function normalizeDraftTurnCandidate(value: unknown): unknown {
+  if (!plainObject(value)) return value;
+  return {
+    reply: typeof value.reply === "string" ? value.reply : "",
+    readyToCommit: typeof value.readyToCommit === "boolean" ? value.readyToCommit : false,
+    properties: Array.isArray(value.properties) ? value.properties.map(normalizePropertyCandidate) : [],
+    projectCuration: Array.isArray(value.projectCuration) ? value.projectCuration.map(normalizeProjectCurationCandidate) : [],
+  };
+}
+
+function normalizePropertyCandidate(value: unknown): unknown {
+  if (!plainObject(value)) return value;
+  return {
+    name: nullableString(value.name),
+    projectName: nullableString(value.projectName),
+    buildingName: nullableString(value.buildingName),
+    houseNumber: nullableString(value.houseNumber),
+    aliases: stringArrayValue(value.aliases),
+    tags: stringArrayValue(value.tags),
+    type: enumValue(value.type, ["apartment", "house", "project", "land", "unknown"], "unknown"),
+    listingType: enumValue(value.listingType, ["sale", "rent", "unknown"], "unknown"),
+    priceVnd: integerOrNull(value.priceVnd),
+    priceBasis: enumValue(value.priceBasis, ["total", "per_m2", "unknown"], "unknown"),
+    areaM2: numberOrNull(value.areaM2),
+    bedrooms: integerOrNull(value.bedrooms),
+    isNegotiable: typeof value.isNegotiable === "boolean" ? value.isNegotiable : false,
+    dealStatus: enumValue(value.dealStatus, ["asking", "transacted", "unknown"], "unknown"),
+    locationText: nullableString(value.locationText),
+    confidence: boundedConfidence(value.confidence),
+  };
+}
+
+function normalizeProjectCurationCandidate(value: unknown): unknown {
+  if (!plainObject(value)) return value;
+  return {
+    projectName: nullableString(value.projectName),
+    buildingName: nullableString(value.buildingName),
+    aliases: stringArrayValue(value.aliases),
+    tags: stringArrayValue(value.tags),
+    addressText: nullableString(value.addressText),
+    wikiNotes: nullableString(value.wikiNotes),
+    facts: Array.isArray(value.facts) ? value.facts : [],
+    evidence: Array.isArray(value.evidence) ? value.evidence : [],
+    searchQuery: nullableString(value.searchQuery),
+    model: typeof value.model === "string" ? value.model : resolveAdkIngestModelId(),
+  };
+}
+
+function repairPrompt(
+  original: AdkPrompt,
+  output: unknown,
+  finalText: string,
+  issues: unknown,
+): AdkPrompt {
+  return {
+    content: {
+      role: "user",
+      parts: [
+        ...original.content.parts,
+        {
+          text:
+            "The previous response did not validate against the required ingest schema. " +
+            "Return the full corrected JSON object only. Include all required keys. " +
+            "Use null for unknown nullable fields such as name, projectName, buildingName, houseNumber, locationText, priceVnd, areaM2, bedrooms. " +
+            "Use [] for aliases, tags, projectCuration, facts, and evidence when empty. " +
+            "Use enum value \"unknown\" when an enum field is unknown.\n\n" +
+            `Validation issues:\n${JSON.stringify(issues).slice(0, 2000)}\n\n` +
+            `Previous stateDelta:\n${JSON.stringify(output).slice(0, 3000)}\n\n` +
+            `Previous text:\n${finalText.slice(0, 3000)}`,
+        },
+      ],
+    },
+  };
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function enumValue<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback;
+}
+
+function integerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function boundedConfidence(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0.5;
+  return Math.max(0, Math.min(1, value));
+}
+
 function extractToolDebug(response: unknown): IngestDebugEvent[] {
   if (!response || typeof response !== "object" || !("debug" in response)) return [];
   const debug = (response as { debug?: unknown }).debug;
@@ -435,4 +578,8 @@ function attachmentPromptText(content: string, attachments: Attachment[]): strin
     .map((a, i) => `Image ${i + 1}: ${a.filename}, ${a.contentType}, ${a.size} bytes, R2 key ${a.key}`)
     .join("\n");
   return `${text}\n\nAttached image metadata:\n${metadata}`;
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
