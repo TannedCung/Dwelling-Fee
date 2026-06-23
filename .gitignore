@@ -17,3 +17,4 @@ phase0/out/
 /e2e/.auth/
 
 .tmp/
+.edge-profile/

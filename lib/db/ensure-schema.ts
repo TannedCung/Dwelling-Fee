@@ -245,6 +245,178 @@ export function ensureCollectionSchema(db: DbExecutor = getDb()): Promise<{ appl
   return collectionSchemaPromise;
 }
 
+const EDGE_STATEMENTS = [
+  sql`
+    DO $$ BEGIN
+      CREATE TYPE "edge_device_status" AS ENUM ('active', 'revoked');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  sql`
+    DO $$ BEGIN
+      CREATE TYPE "crawl_job_status" AS ENUM (
+        'queued',
+        'leased',
+        'running',
+        'succeeded',
+        'failed',
+        'expired',
+        'needs_user_action'
+      );
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "edge_device" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "name" text NOT NULL,
+      "token_hash" text NOT NULL,
+      "status" "edge_device_status" DEFAULT 'active' NOT NULL,
+      "scopes" jsonb,
+      "version" text,
+      "current_job_id" uuid,
+      "last_seen_at" timestamp with time zone,
+      "revoked_at" timestamp with time zone,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "crawl_job" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "source_id" uuid NOT NULL,
+      "status" "crawl_job_status" DEFAULT 'queued' NOT NULL,
+      "priority" integer DEFAULT 0 NOT NULL,
+      "payload" jsonb NOT NULL,
+      "lease_device_id" uuid,
+      "lease_expires_at" timestamp with time zone,
+      "attempts" integer DEFAULT 0 NOT NULL,
+      "max_attempts" integer DEFAULT 3 NOT NULL,
+      "pages_submitted" integer DEFAULT 0 NOT NULL,
+      "items_submitted" integer DEFAULT 0 NOT NULL,
+      "signals_new" integer DEFAULT 0 NOT NULL,
+      "signals_duplicate" integer DEFAULT 0 NOT NULL,
+      "observations_created" integer DEFAULT 0 NOT NULL,
+      "error" text,
+      "metrics" jsonb,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "started_at" timestamp with time zone,
+      "finished_at" timestamp with time zone
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "crawl_result_page" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "job_id" uuid NOT NULL,
+      "device_id" uuid NOT NULL,
+      "canonical_url" text NOT NULL,
+      "status" text NOT NULL,
+      "http_status" integer,
+      "content_hash" text,
+      "text_hash" text,
+      "fetch_duration_ms" integer,
+      "bytes_fetched" integer DEFAULT 0 NOT NULL,
+      "text_length" integer DEFAULT 0 NOT NULL,
+      "item_count" integer DEFAULT 0 NOT NULL,
+      "error" text,
+      "fetched_at" timestamp with time zone,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "crawl_result_item" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "job_id" uuid NOT NULL,
+      "page_id" uuid,
+      "device_id" uuid NOT NULL,
+      "source_ref" text NOT NULL,
+      "page_url" text,
+      "source_type" "source_type" DEFAULT 'web' NOT NULL,
+      "raw_text" text NOT NULL,
+      "captured_at" timestamp with time zone,
+      "raw_signal_id" uuid,
+      "duplicate" boolean DEFAULT false NOT NULL,
+      "observations_created" integer DEFAULT 0 NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "edge_device_event" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "device_id" uuid,
+      "job_id" uuid,
+      "level" text DEFAULT 'info' NOT NULL,
+      "type" text NOT NULL,
+      "message" text NOT NULL,
+      "details" jsonb,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`
+    CREATE TABLE IF NOT EXISTS "edge_device_nonce" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "device_id" uuid NOT NULL,
+      "nonce" text NOT NULL,
+      "seen_at" timestamp with time zone DEFAULT now() NOT NULL
+    )
+  `,
+  sql`ALTER TABLE "edge_device" ADD COLUMN IF NOT EXISTS "current_job_id" uuid`,
+  sql`CREATE INDEX IF NOT EXISTS "edge_device_status_idx" ON "edge_device" USING btree ("status","last_seen_at")`,
+  sql`CREATE INDEX IF NOT EXISTS "crawl_job_status_idx" ON "crawl_job" USING btree ("status","priority","created_at")`,
+  sql`CREATE INDEX IF NOT EXISTS "crawl_job_source_idx" ON "crawl_job" USING btree ("source_id","created_at")`,
+  sql`CREATE INDEX IF NOT EXISTS "crawl_job_device_idx" ON "crawl_job" USING btree ("lease_device_id","lease_expires_at")`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "crawl_result_page_job_url" ON "crawl_result_page" USING btree ("job_id","canonical_url")`,
+  sql`CREATE INDEX IF NOT EXISTS "crawl_result_page_job_idx" ON "crawl_result_page" USING btree ("job_id","created_at")`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "crawl_result_item_job_ref" ON "crawl_result_item" USING btree ("job_id","source_ref")`,
+  sql`CREATE INDEX IF NOT EXISTS "crawl_result_item_job_idx" ON "crawl_result_item" USING btree ("job_id","created_at")`,
+  sql`CREATE INDEX IF NOT EXISTS "edge_device_event_device_idx" ON "edge_device_event" USING btree ("device_id","created_at")`,
+  sql`CREATE INDEX IF NOT EXISTS "edge_device_event_job_idx" ON "edge_device_event" USING btree ("job_id","created_at")`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS "edge_device_nonce_unique" ON "edge_device_nonce" USING btree ("device_id","nonce")`,
+  sql`CREATE INDEX IF NOT EXISTS "edge_device_nonce_seen_idx" ON "edge_device_nonce" USING btree ("seen_at")`,
+];
+
+const EDGE_REQUIRED_COLUMNS = [
+  ["edge_device", "token_hash"],
+  ["edge_device", "scopes"],
+  ["crawl_job", "payload"],
+  ["crawl_job", "lease_expires_at"],
+  ["crawl_result_page", "canonical_url"],
+  ["crawl_result_item", "source_ref"],
+  ["edge_device_event", "type"],
+  ["edge_device_nonce", "nonce"],
+] as const;
+
+let edgeSchemaPromise: Promise<{ applied: number; missing: string[] }> | null = null;
+
+export function ensureEdgeSchema(db: DbExecutor = getDb()): Promise<{ applied: number; missing: string[] }> {
+  edgeSchemaPromise ??= ensureEdgeSchemaOnce(db).catch((error) => {
+    edgeSchemaPromise = null;
+    throw error;
+  });
+  return edgeSchemaPromise;
+}
+
+async function ensureEdgeSchemaOnce(db: DbExecutor): Promise<{ applied: number; missing: string[] }> {
+  for (const statement of EDGE_STATEMENTS) await db.execute(statement);
+  const missing: string[] = [];
+  for (const [table, column] of EDGE_REQUIRED_COLUMNS) {
+    const rows = await db.execute(sql`
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${table}
+        and column_name = ${column}
+      limit 1
+    `);
+    const found = Array.isArray(rows) ? rows.length > 0 : (rows as { rows?: unknown[] }).rows?.length;
+    if (!found) missing.push(`${table}.${column}`);
+  }
+  return { applied: EDGE_STATEMENTS.length, missing };
+}
+
 async function ensureCollectionSchemaOnce(db: DbExecutor): Promise<{ applied: number; missing: string[] }> {
   for (const statement of COLLECTION_STATEMENTS) await db.execute(statement);
 

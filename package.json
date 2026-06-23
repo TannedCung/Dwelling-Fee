@@ -10,6 +10,7 @@
     "start": "next start",
     "phase0:eval": "tsx phase0/eval.ts",
     "phase0:extract": "tsx lib/extraction/extract.ts",
+    "edge:worker": "tsx edge/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -44,6 +45,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "drizzle-kit": "^0.31.10",
+    "playwright": "1.60.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

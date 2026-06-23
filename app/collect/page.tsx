@@ -1,5 +1,6 @@
 import { listSources, recentRuns, type SourceView, type RunView } from "../../lib/collection";
 import { AddSourceForm, RunButton, EnableToggle, PreviewButton } from "./collect-actions";
+import { EnqueueEdgeJobButton } from "../edge-devices/edge-device-actions";
 import { Icon } from "../_components/icon";
 import { DatabaseError } from "../_components/notice";
 import { describeError } from "../../lib/page-error";
@@ -92,6 +93,7 @@ export default async function CollectPage() {
                     </div>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
                       <RunButton sourceId={s.id} label="Run now" />
+                      <EnqueueEdgeJobButton sourceId={s.id} />
                       <PreviewButton sourceId={s.id} />
                       <EnableToggle id={s.id} enabled={s.enabled} />
                     </div>

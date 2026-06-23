@@ -21,7 +21,7 @@ export default auth((req) => {
 
 export const config = {
   // Run on everything except Next internals, the auth API, the cron endpoint
-  // (which guards itself with CRON_SECRET), the sign-in page, and static asset
-  // files (anything with a file extension).
-  matcher: ["/((?!api/auth|api/cron|signin|_next/static|_next/image|favicon.ico|.*\\.[\\w]+$).*)"],
+  // (which guards itself with CRON_SECRET), signed edge-worker APIs, the sign-in
+  // page, and static asset files (anything with a file extension).
+  matcher: ["/((?!api/auth|api/cron|api/edge/worker|signin|_next/static|_next/image|favicon.ico|.*\\.[\\w]+$).*)"],
 };

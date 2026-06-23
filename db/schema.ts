@@ -257,6 +257,16 @@ export const geocodeCache = pgTable("geocode_cache", {
 // content_hash) dedup, so re-running a source is safe.
 export const collectionKind = pgEnum("collection_kind", ["stub", "http"]);
 export const collectionRunStatus = pgEnum("collection_run_status", ["ok", "error"]);
+export const edgeDeviceStatus = pgEnum("edge_device_status", ["active", "revoked"]);
+export const crawlJobStatus = pgEnum("crawl_job_status", [
+  "queued",
+  "leased",
+  "running",
+  "succeeded",
+  "failed",
+  "expired",
+  "needs_user_action",
+]);
 
 export const collectionSource = pgTable("collection_source", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -322,6 +332,141 @@ export const collectionPage = pgTable(
   (t) => [
     unique("collection_page_source_url").on(t.sourceId, t.canonicalUrl),
     index("collection_page_source_idx").on(t.sourceId, t.lastFetchedAt),
+  ],
+);
+
+// ── edge_device — trusted local crawler workers ────────────────────────────
+// Local devices run browser automation that cannot run on Vercel. They lease
+// crawl jobs from the app and submit extracted text back through signed APIs.
+export const edgeDevice = pgTable(
+  "edge_device",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    status: edgeDeviceStatus("status").default("active").notNull(),
+    scopes: jsonb("scopes"),
+    version: text("version"),
+    currentJobId: uuid("current_job_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("edge_device_status_idx").on(t.status, t.lastSeenAt),
+  ],
+);
+
+// ── crawl_job — server-owned queue for local edge devices ──────────────────
+export const crawlJob = pgTable(
+  "crawl_job",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id").references(() => collectionSource.id).notNull(),
+    status: crawlJobStatus("status").default("queued").notNull(),
+    priority: integer("priority").default(0).notNull(),
+    payload: jsonb("payload").notNull(),
+    leaseDeviceId: uuid("lease_device_id").references(() => edgeDevice.id),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(3).notNull(),
+    pagesSubmitted: integer("pages_submitted").default(0).notNull(),
+    itemsSubmitted: integer("items_submitted").default(0).notNull(),
+    signalsNew: integer("signals_new").default(0).notNull(),
+    signalsDuplicate: integer("signals_duplicate").default(0).notNull(),
+    observationsCreated: integer("observations_created").default(0).notNull(),
+    error: text("error"),
+    metrics: jsonb("metrics"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("crawl_job_status_idx").on(t.status, t.priority, t.createdAt),
+    index("crawl_job_source_idx").on(t.sourceId, t.createdAt),
+    index("crawl_job_device_idx").on(t.leaseDeviceId, t.leaseExpiresAt),
+  ],
+);
+
+export const crawlResultPage = pgTable(
+  "crawl_result_page",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id").references(() => crawlJob.id).notNull(),
+    deviceId: uuid("device_id").references(() => edgeDevice.id).notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    status: text("status").notNull(),
+    httpStatus: integer("http_status"),
+    contentHash: text("content_hash"),
+    textHash: text("text_hash"),
+    fetchDurationMs: integer("fetch_duration_ms"),
+    bytesFetched: integer("bytes_fetched").default(0).notNull(),
+    textLength: integer("text_length").default(0).notNull(),
+    itemCount: integer("item_count").default(0).notNull(),
+    error: text("error"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("crawl_result_page_job_url").on(t.jobId, t.canonicalUrl),
+    index("crawl_result_page_job_idx").on(t.jobId, t.createdAt),
+  ],
+);
+
+export const crawlResultItem = pgTable(
+  "crawl_result_item",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id").references(() => crawlJob.id).notNull(),
+    pageId: uuid("page_id").references(() => crawlResultPage.id),
+    deviceId: uuid("device_id").references(() => edgeDevice.id).notNull(),
+    sourceRef: text("source_ref").notNull(),
+    pageUrl: text("page_url"),
+    sourceType: sourceType("source_type").default("web").notNull(),
+    rawText: text("raw_text").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }),
+    rawSignalId: uuid("raw_signal_id").references(() => rawSignal.id),
+    duplicate: boolean("duplicate").default(false).notNull(),
+    observationsCreated: integer("observations_created").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("crawl_result_item_job_ref").on(t.jobId, t.sourceRef),
+    index("crawl_result_item_job_idx").on(t.jobId, t.createdAt),
+  ],
+);
+
+export const edgeDeviceEvent = pgTable(
+  "edge_device_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id").references(() => edgeDevice.id),
+    jobId: uuid("job_id").references(() => crawlJob.id),
+    level: text("level").default("info").notNull(),
+    type: text("type").notNull(),
+    message: text("message").notNull(),
+    details: jsonb("details"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("edge_device_event_device_idx").on(t.deviceId, t.createdAt),
+    index("edge_device_event_job_idx").on(t.jobId, t.createdAt),
+  ],
+);
+
+export const edgeDeviceNonce = pgTable(
+  "edge_device_nonce",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id").references(() => edgeDevice.id).notNull(),
+    nonce: text("nonce").notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique("edge_device_nonce_unique").on(t.deviceId, t.nonce),
+    index("edge_device_nonce_seen_idx").on(t.seenAt),
   ],
 );
 
