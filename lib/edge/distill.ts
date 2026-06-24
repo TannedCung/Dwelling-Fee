@@ -36,6 +36,7 @@ Rules:
 - Remove phone numbers, contact names, and seller/broker identity details if present.
 - Keep price text exactly enough for downstream normalization, including "tỷ", "triệu", "/m²", "thỏa thuận", "TL".
 - Keep area, bedrooms, bathrooms, direction, floor, legal/title, handover/furniture, project, building/tower, unit/house number, and location when stated.
+- Use the source URL slug and title as evidence for building/tower/sub-development names when the card text omits them.
 - If several facts conflict, keep the text as written and lower confidence.
 - Return null for absent fields and an empty usefulFacts array if nothing useful remains.`;
 

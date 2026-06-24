@@ -15,12 +15,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Expand common Vietnamese address shorthand so the geocoder can resolve districts. */
 function expandVn(s: string): string {
   return s
-    .replace(/\bQ\.?\s?(\d{1,2})\b/gi, "Quận $1") // Q9 → Quận 9
-    .replace(/\bP\.?\s?(\d{1,2})\b/g, "Phường $1"); // P.3 → Phường 3
+    .replace(/[\/|]+/g, " ")
+    .replace(/\b(?:Q\.?\s?9|Quận\s*9|District\s*9)\b/gi, "Thành phố Thủ Đức, Thành phố Hồ Chí Minh")
+    .replace(/\bQ\.?\s?(\d{1,2})\b/gi, "Quận $1") // Q7 → Quận 7
+    .replace(/\bDistrict\s*(\d{1,2})\b/gi, "Quận $1")
+    .replace(/\bP\.?\s?(\d{1,2})\b/g, "Phường $1") // P.3 → Phường 3
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Build a geocoder query from a property's name + address, deduped and expanded. */
-function buildQuery(name: string | null, addressText: string | null): string {
+export function buildGeocodeQuery(name: string | null, addressText: string | null): string {
   const parts = [name, addressText]
     .filter((s): s is string => Boolean(s))
     .map((s) => expandVn(s.trim()));
@@ -32,8 +37,18 @@ export async function pendingGeocodeCount(): Promise<number> {
   const db = getDb();
   await ensurePropertyHierarchySchema(db);
   const res = await db.execute(
-    sql`select count(*)::int as n from property
-        where geom is null and (address_text is not null or name is not null or project_name is not null)`,
+    sql`select count(*)::int as n
+        from property p
+        left join project pr on p.project_id = pr.id
+        left join building b on p.building_id = b.id
+        where p.geom is null
+          and (
+            p.address_text is not null
+            or p.name is not null
+            or p.house_number is not null
+            or pr.name is not null
+            or b.name is not null
+          )`,
   );
   return Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
 }
@@ -54,13 +69,20 @@ export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   const db = getDb();
   await ensurePropertyHierarchySchema(db);
   const res = await db.execute(
-    sql`select id,
-          coalesce(nullif(concat_ws(' ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
+    sql`select p.id,
+          coalesce(nullif(concat_ws(' ', pr.name, b.name, p.house_number), ''), p.name) as name,
           p.address_text
         from property p
         left join project pr on p.project_id = pr.id
         left join building b on p.building_id = b.id
-        where p.geom is null and (p.address_text is not null or p.name is not null or p.project_name is not null or pr.name is not null)
+        where p.geom is null
+          and (
+            p.address_text is not null
+            or p.name is not null
+            or p.house_number is not null
+            or pr.name is not null
+            or b.name is not null
+          )
         order by p.created_at limit ${limit}`,
   );
   const rows = rowsOf<{ id: string; name: string | null; address_text: string | null }>(res);
@@ -68,7 +90,7 @@ export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   let geocoded = 0, failed = 0;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
-    const pt = await geocode(buildQuery(row.name, row.address_text));
+    const pt = await geocode(buildGeocodeQuery(row.name, row.address_text));
     if (pt) {
       await db.execute(
         sql`update property set geom = ST_SetSRID(ST_MakePoint(${pt.lng}, ${pt.lat}), 4326), updated_at = now() where id = ${row.id}`,
@@ -98,7 +120,7 @@ export async function mapPoints(): Promise<MapPoint[]> {
   await ensurePropertyHierarchySchema(db);
   const res = await db.execute(sql`
     select p.id,
-      coalesce(nullif(concat_ws(' / ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' / ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
+      coalesce(nullif(concat_ws(' / ', pr.name, b.name, p.house_number), ''), p.name) as name,
       ST_Y(p.geom) as lat, ST_X(p.geom) as lng,
       percentile_cont(0.5) within group (order by o.price_per_m2)
         filter (where o.listing_type = 'sale' and o.price_per_m2 is not null and not o.needs_review) as median_ppm2,

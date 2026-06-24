@@ -26,6 +26,9 @@ Rules:
   buildingName = block/tower/building/phase, e.g. "Block A", "Tòa S1".
   houseNumber = unit/apartment/lot/house number, e.g. "Căn 1", "A1204", "LK-12".
   name = a readable display name for the hierarchy, e.g. "ABC / Block A / Căn 1".
+- For web listings, use the title and source URL as evidence for hierarchy. If a title or slug says
+  "<sub-development/tower/residence> <root project>" (for example a named residence inside a larger
+  project), keep the root as projectName and put the sub-development/tower/residence in buildingName.
 - Do NOT treat generic unit labels like "Căn 1", "căn số 2", "Unit A1204", or "lô 5" as standalone properties unless there is a project/address context. Put them in houseNumber.
 - For apartments, project/building alone is context, not the specific property. If the unit is missing, keep projectName/buildingName, lower confidence, and do not invent houseNumber.
 - Names like "nhà phố ABC", "shophouse ABC", "căn hộ ABC", and "ABC" are the SAME project/property identity. Set projectName="ABC" and put "nhà phố"/"shophouse"/"căn hộ" in tags.

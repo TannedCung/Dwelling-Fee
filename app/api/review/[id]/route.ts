@@ -8,7 +8,12 @@ export const runtime = "nodejs";
 
 const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("link"), propertyId: z.string().uuid() }),
-  z.object({ action: z.literal("create") }),
+  z.object({
+    action: z.literal("create"),
+    projectName: z.string().trim().min(1).nullable().optional(),
+    buildingName: z.string().trim().min(1).nullable().optional(),
+    houseNumber: z.string().trim().min(1).nullable().optional(),
+  }),
   z.object({ action: z.literal("dismiss") }),
 ]);
 
