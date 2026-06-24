@@ -11,9 +11,7 @@ const HttpConfig = z
     allowedDomains: z.array(z.string().min(1)).max(10).optional(),
     maxPages: z.number().int().min(1).max(10).optional(),
     maxDepth: z.number().int().min(0).max(5).optional(),
-    maxConcurrency: z.number().int().min(1).max(5).optional(),
     followLinks: z.boolean().optional(),
-    useSitemaps: z.boolean().optional(),
     includeUrlPatterns: z.array(z.string().min(1)).max(20).optional(),
     excludeUrlPatterns: z.array(z.string().min(1)).max(20).optional(),
     requestDelayMs: z.number().int().min(0).max(60_000).optional(),
@@ -23,7 +21,8 @@ const HttpConfig = z
     contentSelector: z.string().min(1).optional(),
     itemSelector: z.string().min(1).optional(),
     linkSelector: z.string().min(1).optional(),
-    dropSelectors: z.array(z.string().min(1)).max(20).optional(),
+    minItems: z.number().int().min(1).max(50).optional(),
+    solveTimeoutMs: z.number().int().min(60_000).max(3_600_000).optional(),
   })
   .strict();
 

@@ -364,17 +364,18 @@ Rules that keep the numbers defensible:
 | LLM provider | **Anthropic / OpenAI / Gemini** (env-selectable) | extraction tier: Haiku 4.5 / gpt-4.1-mini / gemini-2.5-flash |
 | Summaries | larger model of chosen provider | living-page summaries; debounced, not per-signal |
 | Embeddings | embeddings → `pgvector` | Phase 3 only; pin model+dim (re-embed on change) |
-| Durable jobs | **Inngest** or **Vercel Workflow (WDK)** | extraction/crawl exceed function timeout; need steps+retries+DLQ |
-| Schedule | **Vercel Cron** → enqueue job | periodic crawl kickoff |
-| Crawling | **Firecrawl/Browserless** or **Vercel Sandbox** | JS-rendered, bot-protected sites |
+| Durable jobs | **Edge crawl queue + signed workers** | browser collection runs outside serverless; app leases jobs and records results |
+| Schedule | **Manual or future queue scheduler** | scheduler should enqueue edge jobs, not fetch source pages |
+| Crawling | **Trusted edge devices with Playwright** | JS-rendered sources, persistent profile, human verification when needed |
 | OCR | screenshot → text | for broker screenshots (Phase 2) |
 | Maps | **MapLibre + deck.gl** | heatmaps, large point layers |
 | Charts | **Observable Plot** / visx | scatter + distribution bands |
 | Blob storage | **Vercel Blob** | uploaded screenshots |
 
-**Why durable jobs are non-negotiable:** crawl + multi-step LLM extraction is long-running, must
-survive partial failure, and needs idempotent retries + a dead-letter for `failed` signals. It
-runs as **durable steps triggered by Cron or user action — never inline in a request.**
+**Why durable jobs are non-negotiable:** browser collection + multi-step LLM extraction is
+long-running, must survive partial failure, and needs idempotent retries + a dead-letter for
+`failed` signals. Source-page collection runs on edge devices; server requests only enqueue,
+lease, receive, deduplicate, distill, and ingest results.
 
 **Cost control** (LLM spend is the recurring bill): idempotency (never re-extract same hash),
 model tiering (Haiku extract / Opus summarize), debounced summaries, prompt caching, batch where
@@ -422,11 +423,11 @@ Always render provenance (click a point → raw signal) and the confidence/segme
   HITL review → property/observation records → property living page. Next.js + Neon on Vercel.
 - **Phase 2 — Analytics + viz.** Segmented distributions, medians w/ sample guards, scatter, heatmap.
   OCR for screenshots.
-- **Phase 3 — Collection agent.** Durable scheduled crawl (Cron + Inngest/WDK), idempotent signals,
-  geocoding at scale, embeddings + tuned resolution thresholds.
-  - _Scaffolded:_ `collection_source`/`collection_run` tables, a guarded HTTP fetcher, a runner that
-    feeds items through `ingestSignal()` (idempotent via `raw_signal` dedup), a Vercel Cron entrypoint
-    (`/api/cron/collect`, guarded by `CRON_SECRET`), a manual trigger, and the `/collect` UI.
+- **Phase 3 — Edge collection agent.** Edge-device browser collection, signed job leasing,
+  idempotent signals, geocoding at scale, embeddings + tuned resolution thresholds.
+  - _Current model:_ `/collect` owns source config, edge device registration, job queueing,
+    verification links, result audit rows, deduplication, distillation, and review handoff.
+    Source pages are collected by edge devices, not by Vercel cron or server-side route handlers.
 - **Phase 4 — Outreach + intelligence.** Human-approved broker outreach, reputation scoring,
   valuation alerts on under-valued finds.
 

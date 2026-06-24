@@ -11,7 +11,6 @@ const TABS = [
   { href: "/properties", label: "Properties", icon: "building", match: (p: string) => p.startsWith("/properties") },
   { href: "/map", label: "Map", icon: "map-pin", match: (p: string) => p.startsWith("/map") },
   { href: "/collect", label: "Collect", icon: "globe", match: (p: string) => p.startsWith("/collect") },
-  { href: "/edge-devices", label: "Edge", icon: "monitor", match: (p: string) => p.startsWith("/edge-devices") },
   { href: "/analytics", label: "Analytics", icon: "trending-up", match: (p: string) => p.startsWith("/analytics") },
 ];
 

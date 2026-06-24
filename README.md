@@ -11,7 +11,7 @@
 <p align="center">
   <a href="docs/design.md">Product design</a>
   ·
-  <a href="docs/collection-agent.md">Collection agent plan</a>
+  <a href="docs/collection-agent.md">Edge collection agent</a>
   ·
   <a href="phase0/README.md">Extraction evals</a>
 </p>
@@ -48,7 +48,7 @@ Dwelling Fee turns fragmented housing price signals into structured, queryable m
 | Properties | Living pages for projects/properties with observation history and price distributions. |
 | Analytics | Segmented market stats that keep asking/transacted and sale/rent separate. |
 | Map | Spatial view for location intelligence and future heatmaps. |
-| Collect | Source management and crawler runs for public listing collection. |
+| Collect | Source registry, edge device management, crawl queue, and collection events. |
 
 ## Data Pipeline
 
@@ -64,7 +64,7 @@ db/                Drizzle schema, Neon client, PostGIS/pgvector extensions
 lib/ai/            Vercel AI SDK provider/model registry
 lib/extraction/    LLM prompt, Zod schema, completeness checks
 lib/ingest/        Session chat, draft persistence, one-shot ingest path
-lib/collection/    Source validation, crawler fetchers, run orchestration
+lib/collection/    Source registry and shared edge extraction helpers
 lib/resolution.ts  Deterministic entity blocking, scoring, and decision bands
 lib/review.ts      Human review queue services
 lib/analytics.ts   Market stats and sample-size guarded distributions

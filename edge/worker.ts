@@ -1,16 +1,18 @@
 import { mkdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-// patchright is a patched Playwright that removes the automation tells
-// (CDP Runtime.enable leak, navigator.webdriver, --enable-automation) that
-// Cloudflare/anti-bot vendors fingerprint. Paired with the real Chrome channel
-// (not Chrome-for-Testing) it clears far more managed challenges.
-import { chromium } from "patchright";
+import robotsParser from "robots-parser";
+import { chromium } from "playwright-extra";
+import stealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { BrowserContext, Page } from "playwright";
 import { canonicalUrl, extractLinks, extractPageItems, visibleText } from "../lib/collection/http-fetcher";
 import { EDGE_AUTH_HEADERS, randomNonce, signEdgeRequest } from "../lib/edge/protocol";
 
-const VERSION = "edge-worker/0.1.0";
+const VERSION = "edge-worker/0.2.0";
+const DEFAULT_USER_AGENT = "DwellingFeeBot/0.1 (edge browser crawler; contact: local-user)";
+const RESULT_ITEMS_PER_SUBMISSION = 1;
+
+chromium.use(stealthPlugin());
 
 interface WorkerConfig {
   serverUrl: string;
@@ -20,14 +22,17 @@ interface WorkerConfig {
   pollMs: number;
   headless: boolean;
   once: boolean;
-  // How long to keep a challenged page open so a human can solve it via VNC
-  // before giving up with needs_user_action. 0 disables the wait (headless).
+  chromiumSandbox: boolean;
+  remoteBrowserUrl?: string;
+  // How long to keep a challenged page open so a human can solve it in the
+  // worker browser before giving up with needs_user_action. 0 disables waiting.
   interactiveSolveMs: number;
 }
 
 export interface InteractiveSolve {
   timeoutMs: number;
   heartbeat?: () => Promise<void>;
+  reportRequired?: (input: { url: string; reason: string; solveDeadlineAt: Date }) => Promise<void>;
 }
 
 interface JobResponse {
@@ -60,6 +65,9 @@ export interface CrawlConfig {
   contentSelector?: string;
   linkSelector?: string;
   maxTextChars: number;
+  userAgent: string;
+  minItems: number;
+  solveTimeoutMs: number | null;
 }
 
 export class NeedsUserAction extends Error {
@@ -68,6 +76,8 @@ export class NeedsUserAction extends Error {
     this.name = "NeedsUserAction";
   }
 }
+
+class NonRetryableFetchError extends Error {}
 
 // Human-readable interstitial copy that means a person must act (solve a CAPTCHA,
 // sign in, pass a Cloudflare/anti-bot challenge). Matched against VISIBLE text.
@@ -120,7 +130,7 @@ export function classifyCrawlPage(html: string, text: string, httpStatus?: numbe
 
   const haystackHtml = html.toLowerCase();
   const htmlWall = USER_ACTION_HTML_PATTERNS.find((pattern) => haystackHtml.includes(pattern));
-  if (htmlWall) return { kind: "blocked", reason: `anti-bot challenge: ${htmlWall}` };
+  if (htmlWall && !looksLikeListingContent(text)) return { kind: "blocked", reason: `anti-bot challenge: ${htmlWall}` };
 
   if (httpStatus !== undefined) {
     // 401/403/429 from a bot-protected site without recognizable challenge copy
@@ -133,18 +143,25 @@ export function classifyCrawlPage(html: string, text: string, httpStatus?: numbe
   return { kind: "ok" };
 }
 
+function looksLikeListingContent(text: string): boolean {
+  const haystack = text.toLowerCase();
+  const signals = [
+    /\b\d+(?:[,.]\d+)?\s*(?:tỷ|ty|triệu|tr|vnd|₫|đ)\b/u,
+    /\b\d+(?:[,.]\d+)?\s*m(?:2|²)\b/u,
+    /\b(?:giá|gia|diện tích|dien tich|căn hộ|can ho|chung cư|chung cu|nhà đất|nha dat)\b/u,
+    /\b(?:bán|ban|cho thuê|cho thue|phòng ngủ|phong ngu|pn|apartment|listing)\b/u,
+  ];
+  return signals.filter((pattern) => pattern.test(haystack)).length >= 2;
+}
+
 async function main() {
   const config = readConfig();
-  await mkdir(config.profileDir, { recursive: true });
-  // Real Google Chrome + patchright's stealth patches; viewport:null keeps the
-  // real window size so there's no headless/viewport fingerprint mismatch. The
-  // cast bridges patchright-core's nominal types to playwright's (API-identical),
-  // so crawlPage stays usable from the bundled-Chromium e2e too.
-  const context = (await chromium.launchPersistentContext(config.profileDir, {
-    channel: "chrome",
+  const context = await launchEdgeBrowserContext({
+    profileDir: config.profileDir,
     headless: config.headless,
-    viewport: null,
-  })) as unknown as BrowserContext;
+    channel: "chrome",
+    chromiumSandbox: config.chromiumSandbox,
+  });
 
   process.on("SIGINT", async () => {
     console.log("Stopping edge worker...");
@@ -166,6 +183,23 @@ async function main() {
     await sleep(config.pollMs);
   }
   await context.close();
+}
+
+export async function launchEdgeBrowserContext(options: {
+  profileDir: string;
+  headless: boolean;
+  channel?: string;
+  chromiumSandbox?: boolean;
+}): Promise<BrowserContext> {
+  await mkdir(options.profileDir, { recursive: true });
+  return chromium.launchPersistentContext(options.profileDir, {
+    channel: options.channel,
+    headless: options.headless,
+    chromiumSandbox: options.chromiumSandbox ?? true,
+    // Keep the host window dimensions in headful mode; use Playwright's stable
+    // default viewport in headless/test mode where there is no host window.
+    viewport: options.headless ? undefined : null,
+  });
 }
 
 async function runJob(config: WorkerConfig, context: BrowserContext, job: NonNullable<JobResponse["job"]>) {
@@ -196,6 +230,7 @@ async function crawlSource(
   config: CrawlConfig,
 ) {
   const queue: Array<{ url: URL; depth: number }> = [{ url: new URL(canonicalUrl(new URL(startUrl))), depth: 0 }];
+  const robots = new RobotsCache(fetch, config);
   const queued = new Set(queue.map((target) => canonicalUrl(target.url)));
   const visited = new Set<string>();
   let pages = 0;
@@ -210,24 +245,39 @@ async function crawlSource(
 
     await heartbeat(worker, jobId);
     await sleep(config.requestDelayMs);
+    const solveTimeoutMs = config.solveTimeoutMs ?? worker.interactiveSolveMs;
     const solve: InteractiveSolve | undefined =
-      worker.interactiveSolveMs > 0
-        ? { timeoutMs: worker.interactiveSolveMs, heartbeat: () => heartbeat(worker, jobId) }
+      solveTimeoutMs > 0
+        ? {
+            timeoutMs: solveTimeoutMs,
+            heartbeat: () => heartbeat(worker, jobId),
+            reportRequired: (input) => reportUserAction(worker, jobId, input),
+          }
         : undefined;
-    const result = await crawlPage(context, target.url, config, solve);
+    const result = await crawlPage(context, target.url, config, solve, robots);
     pages++;
     items += result.items.length;
 
-    await submitResults(worker, jobId, {
-      pages: [result.page],
-      items: result.items.map((item) => ({
+    const submissions = splitResultSubmissions(
+      [result.page],
+      result.items.map((item) => ({
         sourceRef: item.sourceRef,
         pageUrl: item.pageUrl,
         sourceType: item.sourceType ?? "web",
         text: item.text,
         capturedAt: item.capturedAt?.toISOString(),
       })),
-    });
+      RESULT_ITEMS_PER_SUBMISSION,
+    );
+    for (let i = 0; i < submissions.length; i++) {
+      const submission = submissions[i]!;
+      await heartbeat(worker, jobId);
+      console.log(
+        `Submitting result batch ${i + 1}/${submissions.length} for ${targetCanonical}: ` +
+          `${submission.pages.length} page(s), ${submission.items.length} item(s)`,
+      );
+      await submitResults(worker, jobId, submission);
+    }
 
     if (config.followLinks && target.depth < config.maxDepth) {
       for (const link of result.links) {
@@ -240,11 +290,22 @@ async function crawlSource(
     }
   }
 
+  if (items < config.minItems) {
+    throw new Error(`edge crawl collected ${items} item(s); expected at least ${config.minItems}`);
+  }
+
   return { pages, items };
 }
 
-export async function crawlPage(context: BrowserContext, url: URL, config: CrawlConfig, solve?: InteractiveSolve) {
+export async function crawlPage(
+  context: BrowserContext,
+  url: URL,
+  config: CrawlConfig,
+  solve?: InteractiveSolve,
+  robots: RobotsCache = new RobotsCache(fetch, config),
+) {
   if (!urlAllowed(url, config)) throw new Error(`URL outside allowlist: ${url.href}`);
+  await robots.assertAllowed(url);
   const page = await context.newPage();
   const started = Date.now();
   try {
@@ -255,19 +316,23 @@ export async function crawlPage(context: BrowserContext, url: URL, config: Crawl
     let text = visibleText(html, config.maxTextChars);
     const verdict = classifyCrawlPage(html, text, response?.status());
     if (verdict.kind === "blocked") {
-      const cleared = solve ? await waitForChallengeToClear(page, url, config, solve) : null;
+      const cleared = solve ? await waitForChallengeToClear(page, url, config, solve, verdict.reason) : null;
       if (!cleared) throw new NeedsUserAction(`Page requires user action (${verdict.reason})`);
       html = cleared.html;
       text = cleared.text;
     } else if (verdict.kind === "error") {
       throw new Error(`Page fetch failed (${verdict.reason})`);
     }
+    await waitForExtractableContent(page, config);
+    html = await page.content();
+    text = visibleText(html, config.maxTextChars);
     const extracted = extractPageItems(html, url, {
       itemSelector: config.itemSelector,
       contentSelector: config.contentSelector,
       linkSelector: config.linkSelector,
       maxTextChars: config.maxTextChars,
     }, new Date());
+    console.log(`Extracted ${extracted.items.length} item(s) from ${url.href}`);
     const canonical = canonicalUrl(url);
     return {
       page: {
@@ -315,10 +380,16 @@ async function waitForChallengeToClear(
   url: URL,
   config: CrawlConfig,
   solve: InteractiveSolve,
+  reason: string,
 ): Promise<{ html: string; text: string } | null> {
   const seconds = Math.round(solve.timeoutMs / 1000);
+  const solveDeadlineAt = new Date(Date.now() + solve.timeoutMs);
+  await solve.reportRequired?.({ url: url.href, reason, solveDeadlineAt }).catch((error) => {
+    console.warn(`Could not report user-action requirement: ${error instanceof Error ? error.message : String(error)}`);
+  });
   console.log(
-    `Challenge wall on ${url.href}. Connect a VNC viewer to localhost:5900 and solve it — ` +
+    `Challenge wall on ${url.href}. Solve it in the browser window ` +
+      `(on this host's desktop, or via VNC if running headless in a container) — ` +
       `waiting up to ${seconds}s (auto-continues once it clears)...`,
   );
   const deadline = Date.now() + solve.timeoutMs;
@@ -326,17 +397,23 @@ async function waitForChallengeToClear(
     await sleep(3000);
     await solve.heartbeat?.().catch(() => undefined);
     await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
-    const html = await page.content();
-    const text = visibleText(html, config.maxTextChars);
-    // Status is irrelevant after the challenge redirects to real content; judge by markup/text only.
-    if (classifyCrawlPage(html, text).kind === "ok") {
-      console.log(`Challenge cleared for ${url.href}; continuing crawl.`);
-      await autoScroll(page);
-      const settledHtml = await page.content();
-      return { html: settledHtml, text: visibleText(settledHtml, config.maxTextChars) };
-    }
+      const html = await page.content();
+      const text = visibleText(html, config.maxTextChars);
+      // Status is irrelevant after the challenge redirects to real content; judge by markup/text only.
+      if (classifyCrawlPage(html, text).kind === "ok") {
+        console.log(`Challenge cleared for ${url.href}; continuing crawl.`);
+        await waitForExtractableContent(page, config);
+        await autoScroll(page);
+        const settledHtml = await page.content();
+        return { html: settledHtml, text: visibleText(settledHtml, config.maxTextChars) };
+      }
   }
   return null;
+}
+
+async function waitForExtractableContent(page: Page, config: CrawlConfig) {
+  if (!config.itemSelector) return;
+  await page.locator(config.itemSelector).first().waitFor({ state: "attached", timeout: 15_000 }).catch(() => undefined);
 }
 
 async function autoScroll(page: Page) {
@@ -357,7 +434,23 @@ async function leaseJob(config: WorkerConfig): Promise<JobResponse> {
 }
 
 async function submitResults(config: WorkerConfig, jobId: string, body: unknown) {
-  return signedFetch(config, `/api/edge/worker/jobs/${jobId}/results`, body);
+  return signedFetch(config, `/api/edge/worker/jobs/${jobId}/results`, body, { retries: 2, timeoutMs: 90_000 });
+}
+
+export function splitResultSubmissions<TPage, TItem>(
+  pages: TPage[],
+  items: TItem[],
+  maxItemsPerSubmission = 10,
+): Array<{ pages: TPage[]; items: TItem[] }> {
+  if (items.length === 0) return [{ pages, items: [] }];
+  const submissions: Array<{ pages: TPage[]; items: TItem[] }> = [];
+  for (let offset = 0; offset < items.length; offset += maxItemsPerSubmission) {
+    submissions.push({
+      pages: offset === 0 ? pages : [],
+      items: items.slice(offset, offset + maxItemsPerSubmission),
+    });
+  }
+  return submissions;
 }
 
 async function complete(
@@ -368,37 +461,82 @@ async function complete(
   return signedFetch(config, `/api/edge/worker/jobs/${jobId}/complete`, body);
 }
 
-async function signedFetch(config: WorkerConfig, pathName: string, bodyValue: unknown) {
+async function reportUserAction(
+  config: WorkerConfig,
+  jobId: string,
+  input: { url: string; reason: string; solveDeadlineAt: Date },
+) {
+  return signedFetch(config, `/api/edge/worker/jobs/${jobId}/user-action`, {
+    url: input.url,
+    reason: input.reason,
+    remoteBrowserUrl: config.remoteBrowserUrl,
+    solveDeadlineAt: input.solveDeadlineAt.toISOString(),
+  });
+}
+
+async function signedFetch(
+  config: WorkerConfig,
+  pathName: string,
+  bodyValue: unknown,
+  options: { retries?: number; timeoutMs?: number } = {},
+) {
   const body = JSON.stringify(bodyValue ?? {});
-  const timestamp = String(Date.now());
-  const nonce = randomNonce();
-  const signature = signEdgeRequest({
-    secret: config.secret,
-    method: "POST",
-    path: pathName,
-    timestamp,
-    nonce,
-    body,
-  });
-  const res = await fetch(new URL(pathName, config.serverUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      [EDGE_AUTH_HEADERS.deviceId]: config.deviceId,
-      [EDGE_AUTH_HEADERS.timestamp]: timestamp,
-      [EDGE_AUTH_HEADERS.nonce]: nonce,
-      [EDGE_AUTH_HEADERS.signature]: signature,
-    },
-    body,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : `edge request failed: ${res.status}`);
-  return data;
+  const attempts = (options.retries ?? 0) + 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const timestamp = String(Date.now());
+    const nonce = randomNonce();
+    const signature = signEdgeRequest({
+      secret: config.secret,
+      method: "POST",
+      path: pathName,
+      timestamp,
+      nonce,
+      body,
+    });
+    const controller = options.timeoutMs ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : null;
+    try {
+      const res = await fetch(new URL(pathName, config.serverUrl), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [EDGE_AUTH_HEADERS.deviceId]: config.deviceId,
+          [EDGE_AUTH_HEADERS.timestamp]: timestamp,
+          [EDGE_AUTH_HEADERS.nonce]: nonce,
+          [EDGE_AUTH_HEADERS.signature]: signature,
+        },
+        body,
+        signal: controller?.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) return data;
+      const message = typeof data.error === "string" ? data.error : `edge request failed: ${res.status}`;
+      if (attempt < attempts && (res.status === 429 || res.status >= 500)) {
+        console.warn(`${pathName} failed on attempt ${attempt}/${attempts}: ${message}`);
+        await sleep(1000 * attempt);
+        continue;
+      }
+      throw new NonRetryableFetchError(message);
+    } catch (error) {
+      if (error instanceof NonRetryableFetchError) throw error;
+      if (attempt >= attempts) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${pathName} failed after ${attempts} attempt(s): ${message}`);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`${pathName} failed on attempt ${attempt}/${attempts}: ${message}`);
+      await sleep(1000 * attempt);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  throw new Error(`${pathName} failed`);
 }
 
 export function parseCrawlConfig(startUrl: string, raw: Record<string, unknown> | null): CrawlConfig {
   const input = raw ?? {};
   const seed = new URL(startUrl);
+  const defaults = sourceDefaults(seed);
   const allowedDomains = new Set<string>([seed.hostname.toLowerCase()]);
   if (Array.isArray(input.allowedDomains)) {
     for (const domain of input.allowedDomains) {
@@ -414,11 +552,26 @@ export function parseCrawlConfig(startUrl: string, raw: Record<string, unknown> 
     excludeUrlPatterns: regexArray(input.excludeUrlPatterns),
     requestDelayMs: clamp(input.requestDelayMs, 1000, 0, 60_000),
     timeoutMs: clamp(input.timeoutMs, 30_000, 1000, 120_000),
-    itemSelector: stringValue(input.itemSelector),
-    contentSelector: stringValue(input.contentSelector),
-    linkSelector: stringValue(input.linkSelector),
+    itemSelector: stringValue(input.itemSelector) ?? defaults.itemSelector,
+    contentSelector: stringValue(input.contentSelector) ?? defaults.contentSelector,
+    linkSelector: stringValue(input.linkSelector) ?? defaults.linkSelector,
     maxTextChars: clamp(input.maxTextChars, 24_000, 1000, 120_000),
+    userAgent: stringValue(input.userAgent) ?? DEFAULT_USER_AGENT,
+    minItems: clamp(input.minItems, 1, 0, 1000),
+    solveTimeoutMs: nullableClamp(input.solveTimeoutMs, 0, 900_000),
   };
+}
+
+function sourceDefaults(seed: URL): Pick<CrawlConfig, "itemSelector" | "contentSelector" | "linkSelector"> {
+  const host = normalizeHost(seed.hostname);
+  if (host === "batdongsan.com.vn" || host.endsWith(".batdongsan.com.vn")) {
+    return {
+      itemSelector: ".js__card, .re__card-info, article",
+      contentSelector: undefined,
+      linkSelector: "a.js__product-link-for-product-id, a[href*='/ban-'], a[href]",
+    };
+  }
+  return { itemSelector: undefined, contentSelector: undefined, linkSelector: undefined };
 }
 
 function urlAllowed(url: URL, config: CrawlConfig): boolean {
@@ -443,8 +596,11 @@ function readConfig(): WorkerConfig {
     pollMs: clamp(process.env.EDGE_POLL_MS, 10_000, 1000, 300_000),
     headless,
     once: process.env.EDGE_ONCE === "1" || process.env.EDGE_ONCE === "true",
-    // Headful runs default to a 5-min solve window; headless runs never wait.
-    interactiveSolveMs: clamp(process.env.EDGE_SOLVE_TIMEOUT_MS, headless ? 0 : 300_000, 0, 900_000),
+    chromiumSandbox: process.env.EDGE_CHROMIUM_SANDBOX !== "0" && process.env.EDGE_CHROMIUM_SANDBOX !== "false",
+    remoteBrowserUrl: stringValue(process.env.EDGE_REMOTE_BROWSER_URL),
+    // Headful runs default to a 10-min solve window; headless runs never wait
+    // unless EDGE_SOLVE_TIMEOUT_MS is explicitly set for a remote/VNC session.
+    interactiveSolveMs: clamp(process.env.EDGE_SOLVE_TIMEOUT_MS, headless ? 0 : 600_000, 0, 900_000),
   };
 }
 
@@ -475,6 +631,12 @@ function clamp(value: unknown, fallback: number, min: number, max: number): numb
   return Math.max(min, Math.min(max, Number.isFinite(n) ? Math.trunc(n) : fallback));
 }
 
+function nullableClamp(value: unknown, min: number, max: number): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.trunc(n))) : null;
+}
+
 function normalizeHost(value: string): string {
   return value.replace(/^https?:\/\//i, "").split("/")[0]!.trim().toLowerCase();
 }
@@ -485,6 +647,46 @@ function sha256(value: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+class RobotsCache {
+  private readonly byOrigin = new Map<string, Promise<ReturnType<typeof robotsParser>>>();
+
+  constructor(private readonly fetchImpl: typeof fetch, private readonly config: CrawlConfig) {}
+
+  async assertAllowed(url: URL): Promise<void> {
+    const parser = await this.rulesFor(url);
+    if (!parser.isAllowed(url.href, this.config.userAgent)) {
+      throw new Error(`robots.txt disallows edge crawl for ${url.href}`);
+    }
+  }
+
+  private rulesFor(url: URL): Promise<ReturnType<typeof robotsParser>> {
+    const existing = this.byOrigin.get(url.origin);
+    if (existing) return existing;
+    const promise = fetchRobots(this.fetchImpl, new URL("/robots.txt", url.origin), this.config);
+    this.byOrigin.set(url.origin, promise);
+    return promise;
+  }
+}
+
+async function fetchRobots(fetchImpl: typeof fetch, robotsUrl: URL, config: CrawlConfig) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const res = await fetchImpl(robotsUrl, {
+      headers: {
+        "user-agent": config.userAgent,
+        accept: "text/plain,*/*;q=0.5",
+      },
+      signal: controller.signal,
+    });
+    if (res.status === 404) return robotsParser(robotsUrl.href, "");
+    if (!res.ok) throw new Error(`could not check robots.txt for ${robotsUrl.origin}: HTTP ${res.status}`);
+    return robotsParser(robotsUrl.href, await res.text());
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

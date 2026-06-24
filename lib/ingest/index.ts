@@ -27,6 +27,7 @@ export interface IngestResult {
  */
 export async function ingestSignal(input: {
   rawText: string;
+  extractionText?: string | null;
   sourceType?: "broker" | "web" | "agent" | "user";
   sourceRef?: string | null;
   capturedAt?: Date | null;
@@ -53,7 +54,8 @@ export async function ingestSignal(input: {
 
   // Extraction is the slow/expensive step — run it OUTSIDE the transaction so we
   // never hold a pooled DB connection open across an LLM call.
-  const { properties } = await extract(input.rawText, attachments);
+  const textForExtraction = input.extractionText?.trim() || input.rawText;
+  const { properties } = await extract(textForExtraction, attachments);
 
   // Signal insert + observations + status update are atomic.
   return transaction(async (tx) => {

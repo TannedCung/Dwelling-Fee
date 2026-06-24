@@ -249,10 +249,9 @@ export const geocodeCache = pgTable("geocode_cache", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-// ── collection_source — registered internet sources for the collection agent ─
-// Phase 3 scaffold (design §3.2, §11). Each row is a place to gather listings from.
-// A scheduled job (Vercel Cron) and a manual trigger fetch enabled sources, then
-// feed each item through the same ingestSignal() pipeline as broker messages.
+// ── collection_source — registered internet sources for edge collection ─────
+// Each row is a public listing source. The app stores config and queue state;
+// registered edge devices perform browser collection and submit extracted posts.
 // Idempotency is handled downstream by raw_signal's (source_type, source_ref,
 // content_hash) dedup, so re-running a source is safe.
 export const collectionKind = pgEnum("collection_kind", ["stub", "http"]);
@@ -282,7 +281,7 @@ export const collectionSource = pgTable("collection_source", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-// ── collection_run — per-execution audit for observability ──────────────────
+// ── collection_run — legacy per-execution audit for prior server runs ───────
 export const collectionRun = pgTable(
   "collection_run",
   {
@@ -305,9 +304,8 @@ export const collectionRun = pgTable(
   (t) => [index("collection_run_source_idx").on(t.sourceId, t.startedAt)],
 );
 
-// ── collection_page — per-page cache/observability for crawler runs ─────────
-// Stores metadata and hashes only. Raw HTML is not retained; extracted source
-// text still enters the system through immutable raw_signal rows.
+// ── collection_page — legacy per-page cache for prior server runs ───────────
+// Kept for existing deployments; new page observability lives in crawl_result_page.
 export const collectionPage = pgTable(
   "collection_page",
   {

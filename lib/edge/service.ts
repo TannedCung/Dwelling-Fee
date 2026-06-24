@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, transaction, type DbExecutor } from "../../db/client";
 import {
@@ -13,6 +13,7 @@ import {
 import { badRequest, unauthorized } from "../api/respond";
 import { ensureEdgeSchema } from "../db/ensure-schema";
 import { ingestSignal } from "../ingest";
+import { distillEdgePost } from "./distill";
 import {
   EDGE_AUTH_HEADERS,
   deviceSecretHash,
@@ -84,6 +85,13 @@ export const CompleteJobInput = z.object({
   status: z.enum(["succeeded", "failed", "needs_user_action"]),
   error: z.string().max(2000).optional(),
   metrics: z.record(z.unknown()).optional(),
+});
+
+export const UserActionInput = z.object({
+  url: z.string().url(),
+  reason: z.string().trim().min(1).max(500),
+  remoteBrowserUrl: z.string().url().optional(),
+  solveDeadlineAt: z.string().datetime().optional(),
 });
 
 export interface AuthenticatedDevice {
@@ -269,13 +277,15 @@ export async function recordHeartbeat(device: AuthenticatedDevice, input: z.infe
     })
     .where(eq(edgeDevice.id, device.id));
   if (input.currentJobId) {
+    const job = await getDb().query.crawlJob.findFirst({ where: eq(crawlJob.id, input.currentJobId) });
+    const status = job?.status === "needs_user_action" ? "needs_user_action" : "running";
     await getDb()
       .update(crawlJob)
-      .set({ status: "running", leaseExpiresAt, updatedAt: now })
+      .set({ status, leaseExpiresAt, updatedAt: now })
       .where(and(
         eq(crawlJob.id, input.currentJobId),
         eq(crawlJob.leaseDeviceId, device.id),
-        inArray(crawlJob.status, ["leased", "running"]),
+        inArray(crawlJob.status, ["leased", "running", "needs_user_action"]),
       ));
   }
   return { ok: true };
@@ -292,7 +302,15 @@ export async function leaseNextJob(device: AuthenticatedDevice, input: z.infer<t
     const candidates = await tx
       .select()
       .from(crawlJob)
-      .where(or(eq(crawlJob.status, "queued"), eq(crawlJob.status, "expired")))
+      .where(or(
+        eq(crawlJob.status, "queued"),
+        eq(crawlJob.status, "expired"),
+        and(
+          eq(crawlJob.status, "needs_user_action"),
+          isNull(crawlJob.leaseExpiresAt),
+          sql`${crawlJob.attempts} < ${crawlJob.maxAttempts}`,
+        ),
+      ))
       .orderBy(desc(crawlJob.priority), crawlJob.createdAt)
       .limit(20);
 
@@ -306,10 +324,17 @@ export async function leaseNextJob(device: AuthenticatedDevice, input: z.infer<t
           leaseExpiresAt,
           attempts: sql`${crawlJob.attempts} + 1`,
           startedAt: candidate.startedAt ?? now,
+          finishedAt: null,
           updatedAt: now,
           error: null,
         })
-        .where(and(eq(crawlJob.id, candidate.id), inArray(crawlJob.status, ["queued", "expired"])))
+        .where(and(
+          eq(crawlJob.id, candidate.id),
+          or(
+            inArray(crawlJob.status, ["queued", "expired"]),
+            and(eq(crawlJob.status, "needs_user_action"), isNull(crawlJob.leaseExpiresAt)),
+          ),
+        ))
         .returning();
       if (row) return row;
     }
@@ -403,8 +428,46 @@ export async function submitJobResults(
     if (item.pageUrl) assertAllowedUrl(item.pageUrl, allowedDomains);
     if (looksLikeUrl(item.sourceRef)) assertAllowedUrl(item.sourceRef, allowedDomains);
     const sourceRef = item.sourceRef;
+    const existingItem = await getDb().query.crawlResultItem.findFirst({
+      columns: { id: true },
+      where: (t, { and, eq }) => and(eq(t.jobId, jobId), eq(t.sourceRef, sourceRef)),
+    });
+    if (existingItem) continue;
+
+    const existingSignal = await getDb().query.rawSignal.findFirst({
+      columns: { id: true },
+      where: (s, { and, eq }) => and(eq(s.sourceType, item.sourceType), eq(s.sourceRef, sourceRef)),
+    });
+    if (existingSignal) {
+      const inserted = await getDb()
+        .insert(crawlResultItem)
+        .values({
+          jobId,
+          pageId: item.pageUrl ? pageIds.get(item.pageUrl) ?? null : null,
+          deviceId: device.id,
+          sourceRef,
+          pageUrl: item.pageUrl ?? null,
+          sourceType: item.sourceType,
+          rawText: item.text,
+          capturedAt: item.capturedAt ? new Date(item.capturedAt) : now,
+          rawSignalId: existingSignal.id,
+          duplicate: true,
+          observationsCreated: 0,
+        })
+        .onConflictDoNothing({ target: [crawlResultItem.jobId, crawlResultItem.sourceRef] })
+        .returning({ id: crawlResultItem.id });
+      if (inserted.length === 0) continue;
+      itemsAccepted++;
+      signalsDuplicate++;
+      continue;
+    }
     const ingest = await ingestSignal({
       rawText: item.text,
+      extractionText: await distillEdgePost({
+        rawText: item.text,
+        sourceRef,
+        pageUrl: item.pageUrl ?? null,
+      }),
       sourceType: item.sourceType,
       sourceRef,
       capturedAt: item.capturedAt ? new Date(item.capturedAt) : now,
@@ -457,6 +520,40 @@ export async function submitJobResults(
   return { pagesAccepted, itemsAccepted, signalsNew, signalsDuplicate, observationsCreated };
 }
 
+export async function reportJobUserAction(
+  device: AuthenticatedDevice,
+  jobId: string,
+  input: z.infer<typeof UserActionInput>,
+) {
+  await ensureEdgeSchema();
+  await getActiveJobForDevice(device, jobId);
+  const now = new Date();
+  const leaseExpiresAt = input.solveDeadlineAt ? new Date(input.solveDeadlineAt) : new Date(now.getTime() + HEARTBEAT_LEASE_EXTENSION_SECONDS * 1000);
+  await getDb()
+    .update(crawlJob)
+    .set({
+      status: "needs_user_action",
+      error: input.reason,
+      leaseExpiresAt,
+      updatedAt: now,
+    })
+    .where(eq(crawlJob.id, jobId));
+  await logEdgeEvent({
+    deviceId: device.id,
+    jobId,
+    level: "warning",
+    type: "job.user_action_required",
+    message: "Crawler is waiting for browser verification.",
+    details: {
+      url: input.url,
+      reason: input.reason,
+      remoteBrowserUrl: input.remoteBrowserUrl ?? null,
+      solveDeadlineAt: input.solveDeadlineAt ?? leaseExpiresAt.toISOString(),
+    },
+  });
+  return { ok: true };
+}
+
 export async function completeJob(
   device: AuthenticatedDevice,
   jobId: string,
@@ -465,13 +562,15 @@ export async function completeJob(
   await ensureEdgeSchema();
   const job = await getActiveJobForDevice(device, jobId);
   const finishedAt = new Date();
+  const waitingForUser = input.status === "needs_user_action";
   await getDb()
     .update(crawlJob)
     .set({
       status: input.status,
       error: input.error ?? null,
       metrics: input.metrics ?? null,
-      finishedAt,
+      leaseDeviceId: waitingForUser ? null : job.leaseDeviceId,
+      finishedAt: waitingForUser ? null : finishedAt,
       updatedAt: finishedAt,
       leaseExpiresAt: null,
     })
@@ -503,7 +602,7 @@ export async function completeJob(
 async function getActiveJobForDevice(device: AuthenticatedDevice, jobId: string) {
   const job = await getDb().query.crawlJob.findFirst({ where: eq(crawlJob.id, jobId) });
   if (!job) throw badRequest("crawl job not found");
-  if (job.leaseDeviceId !== device.id || !["leased", "running"].includes(job.status)) {
+  if (job.leaseDeviceId !== device.id || !["leased", "running", "needs_user_action"].includes(job.status)) {
     throw unauthorized("crawl job is not leased to this device");
   }
   if (job.leaseExpiresAt && job.leaseExpiresAt.getTime() < Date.now()) {
@@ -522,7 +621,7 @@ async function expireStaleLeases(now: Date): Promise<void> {
       updatedAt: now,
       error: "Lease expired before completion.",
     })
-    .where(and(inArray(crawlJob.status, ["leased", "running"]), lt(crawlJob.leaseExpiresAt, now)));
+    .where(and(inArray(crawlJob.status, ["leased", "running", "needs_user_action"]), lt(crawlJob.leaseExpiresAt, now)));
 }
 
 async function allowedDomainsForSource(sourceId: string): Promise<string[]> {

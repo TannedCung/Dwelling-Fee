@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/client";
-import { collectionSource, collectionRun } from "../../db/schema";
+import { collectionSource } from "../../db/schema";
 import { ensureCollectionSchema } from "../db/ensure-schema";
 
 export type CollectionKind = "stub" | "http";
@@ -49,32 +49,4 @@ export async function setEnabled(id: string, enabled: boolean): Promise<void> {
   await ensureCollectionSchema();
   const db = getDb();
   await db.update(collectionSource).set({ enabled }).where(eq(collectionSource.id, id));
-}
-
-export interface RunView {
-  id: string;
-  sourceId: string;
-  status: "ok" | "error";
-  pagesFetched: number;
-  pagesSkippedUnchanged: number;
-  pagesFailed: number;
-  bytesFetched: number;
-  itemsFetched: number;
-  itemsExtracted: number;
-  signalsNew: number;
-  signalsDuplicate: number;
-  observationsCreated: number;
-  error: string | null;
-  startedAt: Date;
-  finishedAt: Date | null;
-}
-
-export async function recentRuns(limit = 20): Promise<RunView[]> {
-  await ensureCollectionSchema();
-  const db = getDb();
-  return db
-    .select()
-    .from(collectionRun)
-    .orderBy(desc(collectionRun.startedAt))
-    .limit(limit) as Promise<RunView[]>;
 }
