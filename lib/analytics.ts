@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { building, priceObservation, project, property, location } from "../db/schema";
 import { distribution, quantile, MIN_SAMPLE, type Distribution } from "./stats";
@@ -259,11 +259,11 @@ export async function loadAnalytics(filters: AnalyticsFilters, now = new Date())
       locName: location.name,
     })
     .from(priceObservation)
-    .leftJoin(property, eq(priceObservation.propertyId, property.id))
+    .innerJoin(property, eq(priceObservation.propertyId, property.id))
     .leftJoin(project, eq(property.projectId, project.id))
     .leftJoin(building, eq(property.buildingId, building.id))
     .leftJoin(location, eq(property.locationId, location.id))
-    .where(eq(priceObservation.needsReview, false));
+    .where(and(eq(priceObservation.needsReview, false), isNotNull(priceObservation.propertyId)));
 
   const all: ObsRow[] = raw.map((r) => ({
     ppm2: r.ppm2 == null ? null : Number(r.ppm2),

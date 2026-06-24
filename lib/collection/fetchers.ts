@@ -8,7 +8,7 @@ export type CollectionSourceType = "broker" | "web" | "agent" | "user";
 export interface CollectedItem {
   /** Stable identifier for this item within the source — drives idempotency. */
   sourceRef: string;
-  /** Raw listing text, fed verbatim into ingestSignal(). */
+  /** Raw listing text submitted by the edge device; the server distills it before ingest. */
   text: string;
   /** Canonical page URL that produced this item, when available. */
   pageUrl?: string;

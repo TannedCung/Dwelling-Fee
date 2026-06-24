@@ -3,6 +3,7 @@ import { ReviewActions } from "./review-actions";
 import { Icon } from "../_components/icon";
 import { DatabaseError } from "../_components/notice";
 import { describeError } from "../../lib/page-error";
+import { sourceHostLabel, sourceUrlFromRef } from "../../lib/source";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +26,16 @@ function extractionTitle(extraction: ReviewItem["extraction"]): string {
   return [extraction.projectName, extraction.buildingName, extraction.houseNumber].filter(Boolean).join(" / ")
     || extraction.name
     || "(no name)";
+}
+
+function SourceLink({ item }: { item: ReviewItem }) {
+  const sourceUrl = sourceUrlFromRef(item.sourceType, item.sourceRef);
+  if (!sourceUrl) return null;
+  return (
+    <a href={sourceUrl} target="_blank" rel="noreferrer" className="chip mono">
+      <Icon name="link" size={12} />{sourceHostLabel(sourceUrl)}
+    </a>
+  );
 }
 
 export default async function ReviewPage() {
@@ -67,6 +78,7 @@ export default async function ReviewPage() {
                 <span className="mono">{vnd(it.priceVnd)}</span>
                 {it.extraction.areaM2 != null && <span className="mono">{it.extraction.areaM2} m²</span>}
                 {it.confidence != null && <ConfidenceBadge value={it.confidence} />}
+                <SourceLink item={it} />
               </div>
               <ReviewActions observationId={it.observationId} candidates={it.candidates} />
             </div>

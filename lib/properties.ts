@@ -1,6 +1,8 @@
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/client";
-import { building, project, property, priceObservation } from "../db/schema";
+import { building, project, property, priceObservation, rawSignal } from "../db/schema";
+import { PropertyExtraction } from "./extraction/schema";
+import { sourceUrlFromRef } from "./source";
 import { distribution, type Distribution } from "./stats";
 
 export interface PropertyListItem {
@@ -54,7 +56,7 @@ export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
           pricePerM2: priceObservation.pricePerM2,
         })
         .from(priceObservation)
-        .where(inArray(priceObservation.propertyId, ids));
+        .where(and(inArray(priceObservation.propertyId, ids), eq(priceObservation.needsReview, false)));
 
   const byProperty = new Map<string, { salePpm2: number[]; lastSeen: Date | null }>();
   for (const o of obs) {
@@ -80,13 +82,18 @@ export async function listProperties(limit = 100): Promise<PropertyListItem[]> {
 export interface ObservationPoint {
   id: string;
   t: number; // epoch ms (observed_at, fallback created_at)
+  projectName: string | null;
+  buildingName: string | null;
   pricePerM2: number | null;
   priceVnd: number | null;
   areaM2: number | null;
   listingType: string;
   dealStatus: string;
   sourceType: string;
+  sourceRef: string | null;
+  sourceUrl: string | null;
   confidence: number | null;
+  needsReview: boolean;
 }
 
 export interface PropertyDetail {
@@ -138,26 +145,38 @@ export async function getProperty(id: string): Promise<PropertyDetail | null> {
       listingType: priceObservation.listingType,
       dealStatus: priceObservation.dealStatus,
       sourceType: priceObservation.sourceType,
+      sourceRef: rawSignal.sourceRef,
       confidence: priceObservation.confidence,
+      needsReview: priceObservation.needsReview,
+      extracted: priceObservation.extracted,
     })
     .from(priceObservation)
+    .innerJoin(rawSignal, eq(rawSignal.id, priceObservation.rawSignalId))
     .where(eq(priceObservation.propertyId, id))
     .orderBy(priceObservation.createdAt);
 
-  const observations: ObservationPoint[] = obs.map((o) => ({
-    id: o.id,
-    t: (o.observedAt ?? o.createdAt).getTime(),
-    pricePerM2: o.pricePerM2 != null ? Number(o.pricePerM2) : null,
-    priceVnd: o.priceVnd,
-    areaM2: o.areaM2 != null ? Number(o.areaM2) : null,
-    listingType: o.listingType,
-    dealStatus: o.dealStatus,
-    sourceType: o.sourceType,
-    confidence: o.confidence != null ? Number(o.confidence) : null,
-  }));
+  const observations: ObservationPoint[] = obs.map((o) => {
+    const identity = extractionIdentity(o.extracted);
+    return {
+      id: o.id,
+      t: (o.observedAt ?? o.createdAt).getTime(),
+      projectName: identity.projectName ?? p.projectName,
+      buildingName: identity.buildingName ?? p.buildingName,
+      pricePerM2: o.pricePerM2 != null ? Number(o.pricePerM2) : null,
+      priceVnd: o.priceVnd,
+      areaM2: o.areaM2 != null ? Number(o.areaM2) : null,
+      listingType: o.listingType,
+      dealStatus: o.dealStatus,
+      sourceType: o.sourceType,
+      sourceRef: o.sourceRef,
+      sourceUrl: sourceUrlFromRef(o.sourceType, o.sourceRef),
+      confidence: o.confidence != null ? Number(o.confidence) : null,
+      needsReview: o.needsReview,
+    };
+  });
 
   const salePpm2 = observations
-    .filter((o) => o.listingType === "sale" && o.pricePerM2 != null)
+    .filter((o) => !o.needsReview && o.listingType === "sale" && o.pricePerM2 != null)
     .map((o) => o.pricePerM2!);
 
   return {
@@ -350,7 +369,7 @@ async function projectStats(ids: string[]): Promise<Map<string, { salePpm2: numb
     })
     .from(priceObservation)
     .innerJoin(property, eq(priceObservation.propertyId, property.id))
-    .where(inArray(property.projectId, ids));
+    .where(and(inArray(property.projectId, ids), eq(priceObservation.needsReview, false)));
   const out = new Map<string, { salePpm2: number[]; lastSeen: Date | null }>();
   for (const o of obs) {
     if (!o.projectId) continue;
@@ -372,7 +391,7 @@ async function buildingStats(ids: string[]): Promise<Map<string, { salePpm2: num
     })
     .from(priceObservation)
     .innerJoin(property, eq(priceObservation.propertyId, property.id))
-    .where(inArray(property.buildingId, ids));
+    .where(and(inArray(property.buildingId, ids), eq(priceObservation.needsReview, false)));
   const out = new Map<string, { salePpm2: number[]; lastSeen: Date | null }>();
   for (const o of obs) {
     if (!o.buildingId) continue;
@@ -395,4 +414,13 @@ function collectStat(
 
 function textArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((tag): tag is string => typeof tag === "string") : [];
+}
+
+function extractionIdentity(value: unknown): { projectName: string | null; buildingName: string | null } {
+  const parsed = PropertyExtraction.safeParse(value);
+  if (!parsed.success) return { projectName: null, buildingName: null };
+  return {
+    projectName: parsed.data.projectName,
+    buildingName: parsed.data.buildingName,
+  };
 }

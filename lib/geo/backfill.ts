@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client";
+import { ensurePropertyHierarchySchema } from "../db/ensure-schema";
 import { geocode } from "./geocode";
 
 // Normalize drizzle/neon-http execute() return shape across versions.
@@ -29,6 +30,7 @@ function buildQuery(name: string | null, addressText: string | null): string {
 
 export async function pendingGeocodeCount(): Promise<number> {
   const db = getDb();
+  await ensurePropertyHierarchySchema(db);
   const res = await db.execute(
     sql`select count(*)::int as n from property
         where geom is null and (address_text is not null or name is not null or project_name is not null)`,
@@ -50,6 +52,7 @@ export interface BackfillResult {
  */
 export async function geocodeMissing(limit = 5): Promise<BackfillResult> {
   const db = getDb();
+  await ensurePropertyHierarchySchema(db);
   const res = await db.execute(
     sql`select id,
           coalesce(nullif(concat_ws(' ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,
@@ -92,6 +95,7 @@ export interface MapPoint {
 /** Geocoded properties with their median sale price/m² for the map + heatmap. */
 export async function mapPoints(): Promise<MapPoint[]> {
   const db = getDb();
+  await ensurePropertyHierarchySchema(db);
   const res = await db.execute(sql`
     select p.id,
       coalesce(nullif(concat_ws(' / ', pr.name, b.name, p.house_number), ''), nullif(concat_ws(' / ', p.project_name, p.building_name, p.house_number), ''), p.name) as name,

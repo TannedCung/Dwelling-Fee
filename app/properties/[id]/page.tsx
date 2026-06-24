@@ -6,6 +6,7 @@ import { MIN_SAMPLE } from "../../../lib/stats";
 import { Icon } from "../../_components/icon";
 import { DatabaseError } from "../../_components/notice";
 import { describeError } from "../../../lib/page-error";
+import { sourceHostLabel } from "../../../lib/source";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,6 +39,19 @@ function SourceChip({ source }: { source: string }) {
       <span className="dot" style={{ background: SOURCE_COLOR[source] ?? "var(--ink-3)" }} />
       {SOURCE_LABEL[source] ?? source}
     </span>
+  );
+}
+
+function SourceCell({ sourceType, sourceUrl }: { sourceType: string; sourceUrl: string | null }) {
+  return (
+    <div style={{ display: "grid", gap: 4, justifyItems: "start" }}>
+      <SourceChip source={sourceType} />
+      {sourceUrl && (
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 12 }}>
+          {sourceHostLabel(sourceUrl)}
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -161,12 +175,14 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
           <h2>Price/m² over time</h2>
         </div>
         <PriceScatter
-          points={detail.observations.map((o) => ({
-            t: o.t,
-            pricePerM2: o.pricePerM2,
-            sourceType: o.sourceType,
-            dealStatus: o.dealStatus,
-          }))}
+          points={detail.observations
+            .filter((o) => !o.needsReview)
+            .map((o) => ({
+              t: o.t,
+              pricePerM2: o.pricePerM2,
+              sourceType: o.sourceType,
+              dealStatus: o.dealStatus,
+            }))}
           band={{ median: d.median, p25: d.p25, p75: d.p75 }}
         />
       </div>
@@ -180,10 +196,12 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
           <div className="empty">No observations linked to this property.</div>
         ) : (
           <div className="table-wrap">
-            <table className="data" style={{ minWidth: 560 }}>
+            <table className="data" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
                   <th className="l">Date</th>
+                  <th className="l">Project</th>
+                  <th className="l">Building</th>
                   <th className="l">Listing</th>
                   <th className="l">Deal</th>
                   <th>Price</th>
@@ -197,6 +215,8 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
                 {detail.observations.map((o) => (
                   <tr key={o.id}>
                     <td className="l seg">{new Date(o.t).toLocaleDateString()}</td>
+                    <td className="l seg">{o.projectName ?? "—"}</td>
+                    <td className="l seg">{o.buildingName ?? "—"}</td>
                     <td className="l seg">{o.listingType}</td>
                     <td className="l seg">
                       <span className={`badge ${o.dealStatus === "transacted" ? "transacted" : o.dealStatus === "asking" ? "asking" : "neutral"}`} style={{ padding: "2px 9px" }}>
@@ -206,7 +226,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
                     <td>{o.priceVnd == null ? "—" : m(o.priceVnd)}</td>
                     <td>{o.areaM2 == null ? "—" : `${o.areaM2} m²`}</td>
                     <td>{m(o.pricePerM2)}</td>
-                    <td className="l seg"><SourceChip source={o.sourceType} /></td>
+                    <td className="l seg"><SourceCell sourceType={o.sourceType} sourceUrl={o.sourceUrl} /></td>
                     <td>{o.confidence == null ? "—" : `${(o.confidence * 100).toFixed(0)}%`}</td>
                   </tr>
                 ))}

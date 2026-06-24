@@ -427,16 +427,22 @@ export async function submitJobResults(
   for (const item of input.items) {
     if (item.pageUrl) assertAllowedUrl(item.pageUrl, allowedDomains);
     if (looksLikeUrl(item.sourceRef)) assertAllowedUrl(item.sourceRef, allowedDomains);
-    const sourceRef = item.sourceRef;
+    const submittedSourceRef = item.sourceRef;
+    const signalSourceRef = sourceRefForSignal({
+      sourceType: item.sourceType,
+      sourceRef: item.sourceRef,
+      pageUrl: item.pageUrl ?? null,
+    });
+    if (looksLikeUrl(signalSourceRef)) assertAllowedUrl(signalSourceRef, allowedDomains);
     const existingItem = await getDb().query.crawlResultItem.findFirst({
       columns: { id: true },
-      where: (t, { and, eq }) => and(eq(t.jobId, jobId), eq(t.sourceRef, sourceRef)),
+      where: (t, { and, eq }) => and(eq(t.jobId, jobId), eq(t.sourceRef, submittedSourceRef)),
     });
     if (existingItem) continue;
 
     const existingSignal = await getDb().query.rawSignal.findFirst({
       columns: { id: true },
-      where: (s, { and, eq }) => and(eq(s.sourceType, item.sourceType), eq(s.sourceRef, sourceRef)),
+      where: (s, { and, eq }) => and(eq(s.sourceType, item.sourceType), eq(s.sourceRef, signalSourceRef)),
     });
     if (existingSignal) {
       const inserted = await getDb()
@@ -445,7 +451,7 @@ export async function submitJobResults(
           jobId,
           pageId: item.pageUrl ? pageIds.get(item.pageUrl) ?? null : null,
           deviceId: device.id,
-          sourceRef,
+          sourceRef: submittedSourceRef,
           pageUrl: item.pageUrl ?? null,
           sourceType: item.sourceType,
           rawText: item.text,
@@ -461,15 +467,16 @@ export async function submitJobResults(
       signalsDuplicate++;
       continue;
     }
-    const ingest = await ingestSignal({
+    const distilledText = await distillEdgePost({
       rawText: item.text,
-      extractionText: await distillEdgePost({
-        rawText: item.text,
-        sourceRef,
-        pageUrl: item.pageUrl ?? null,
-      }),
+      sourceRef: signalSourceRef,
+      pageUrl: item.pageUrl ?? null,
+    });
+    const ingest = await ingestSignal({
+      rawText: distilledText,
+      extractionText: distilledText,
       sourceType: item.sourceType,
-      sourceRef,
+      sourceRef: signalSourceRef,
       capturedAt: item.capturedAt ? new Date(item.capturedAt) : now,
     });
     const pageId = item.pageUrl ? pageIds.get(item.pageUrl) ?? null : null;
@@ -479,7 +486,7 @@ export async function submitJobResults(
         jobId,
         pageId,
         deviceId: device.id,
-        sourceRef,
+        sourceRef: submittedSourceRef,
         pageUrl: item.pageUrl ?? null,
         sourceType: item.sourceType,
         rawText: item.text,
@@ -652,6 +659,13 @@ function assertAllowedUrl(raw: string, allowedDomains: string[]): void {
 
 function looksLikeUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
+}
+
+export function sourceRefForSignal(input: { sourceType: string; sourceRef: string; pageUrl?: string | null }): string {
+  if (input.sourceType !== "web") return input.sourceRef;
+  if (looksLikeUrl(input.sourceRef)) return input.sourceRef;
+  if (!input.pageUrl) return input.sourceRef;
+  return `${input.pageUrl}#item=${sha256Hex(input.sourceRef).slice(0, 12)}`;
 }
 
 function normalizeHost(value: string): string {

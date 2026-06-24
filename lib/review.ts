@@ -13,6 +13,8 @@ export interface ReviewItem {
   observationId: string;
   rawSignalId: string;
   rawText: string;
+  sourceType: string;
+  sourceRef: string | null;
   extraction: PropertyExtraction;
   priceVnd: number | null;
   confidence: number | null;
@@ -36,6 +38,8 @@ export async function listReviewQueue(limit = 50): Promise<ReviewItem[]> {
       observationId: priceObservation.id,
       rawSignalId: priceObservation.rawSignalId,
       rawText: rawSignal.rawText,
+      sourceType: rawSignal.sourceType,
+      sourceRef: rawSignal.sourceRef,
       extracted: priceObservation.extracted,
       priceVnd: priceObservation.priceVnd,
       confidence: priceObservation.confidence,
@@ -53,6 +57,8 @@ export async function listReviewQueue(limit = 50): Promise<ReviewItem[]> {
       observationId: r.observationId,
       rawSignalId: r.rawSignalId,
       rawText: r.rawText,
+      sourceType: r.sourceType,
+      sourceRef: r.sourceRef,
       extraction,
       priceVnd: r.priceVnd,
       confidence: r.confidence != null ? Number(r.confidence) : null,

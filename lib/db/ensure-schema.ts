@@ -173,7 +173,17 @@ const REQUIRED_COLUMNS = [
   ["property", "tags"],
 ] as const;
 
-export async function ensurePropertyHierarchySchema(db: DbExecutor = getDb()): Promise<{ applied: number; missing: string[] }> {
+let propertyHierarchySchemaPromise: Promise<{ applied: number; missing: string[] }> | null = null;
+
+export function ensurePropertyHierarchySchema(db: DbExecutor = getDb()): Promise<{ applied: number; missing: string[] }> {
+  propertyHierarchySchemaPromise ??= ensurePropertyHierarchySchemaOnce(db).catch((error) => {
+    propertyHierarchySchemaPromise = null;
+    throw error;
+  });
+  return propertyHierarchySchemaPromise;
+}
+
+async function ensurePropertyHierarchySchemaOnce(db: DbExecutor): Promise<{ applied: number; missing: string[] }> {
   for (const statement of STATEMENTS) await db.execute(statement);
 
   const missing: string[] = [];

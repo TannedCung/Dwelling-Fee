@@ -60,8 +60,9 @@ The app exposes these operational surfaces under `/collect`:
 - Persist page and item audit rows submitted by workers.
 - Skip duplicate `raw_signal` source references before adding review work.
 - Distill non-duplicate post text with `distillEdgePost()` before ingestion.
-- Ingest distilled text through the same append-only `ingestSignal()` path used by
-  broker messages.
+- Keep the original submitted item text in `crawl_result_item.raw_text`, then
+  ingest the distilled text through the same append-only `ingestSignal()` path
+  used by broker messages.
 
 The server must not run source-page fetches, Playwright crawls, CAPTCHA solving,
 or long-lived browser sessions.
@@ -100,7 +101,7 @@ Active edge collection uses:
 - `edge_device_event`: audit timeline.
 - `crawl_result_page`: per-job page metadata submitted by workers.
 - `crawl_result_item`: submitted extracted post text and ingest linkage.
-- `raw_signal`: immutable source text and dedup boundary.
+- `raw_signal`: immutable distilled ingestion text and dedup boundary.
 
 `collection_run` and `collection_page` are legacy tables from the earlier
 server-side crawler. They remain in schema for existing deployments but are not
