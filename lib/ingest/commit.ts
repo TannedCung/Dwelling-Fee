@@ -7,6 +7,7 @@ import { persistDraft, type PersistResult } from "./persist";
 import { draftReady, incompleteSummary } from "../extraction/completeness";
 import { persistableAttachments } from "../storage/r2";
 import { commitProjectCuration } from "./project-curation";
+import { postProcessProjectBuildingAssignments } from "./hierarchy-assignment";
 
 export interface CommitResult extends PersistResult {
   rawSignalId: string;
@@ -36,6 +37,14 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
   const attachmentText = attachments.map((a) => `[image: ${a.filename}] ${a.url}`).join("\n");
   const text = [textOnly, attachmentText].filter(Boolean).join("\n\n") || `(ingest session ${sessionId})`;
   const contentHash = createHash("sha256").update(text.trim()).digest("hex");
+  const hierarchy = await postProcessProjectBuildingAssignments(session.draft);
+  const curationDrafts = [...session.projectCuration, ...hierarchy.projectCuration];
+  let curation = { projectsUpserted: 0, buildingsUpserted: 0 };
+  try {
+    curation = await commitProjectCuration(curationDrafts);
+  } catch {
+    // Tier 2 curation is supporting context; never block the primary observation commit for it.
+  }
 
   // Signal + observations + session close + audit message are one atomic unit: a
   // partial failure must not leave observations written against an open session.
@@ -66,16 +75,10 @@ export async function commitSession(sessionId: string): Promise<CommitResult> {
     }
 
     const result = await persistDraft(
-      session.draft,
+      hierarchy.properties,
       { rawSignalId, ingestSessionId: sessionId, sourceType: session.sourceType },
       tx,
     );
-    let curation = { projectsUpserted: 0, buildingsUpserted: 0 };
-    try {
-      curation = await commitProjectCuration(session.projectCuration, tx);
-    } catch {
-      // Tier 2 curation is supporting context; never roll back the primary observation commit for it.
-    }
 
     await tx
       .update(ingestSession)

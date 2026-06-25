@@ -5,6 +5,7 @@ import { rawSignal } from "../../db/schema";
 import { extract } from "../extraction/extract";
 import { persistDraft } from "./persist";
 import { persistableAttachments, type Attachment } from "../storage/r2";
+import { commitHierarchyPostProcessCuration, postProcessProjectBuildingAssignments } from "./hierarchy-assignment";
 
 export * from "./session";
 export * from "./agent";
@@ -56,6 +57,12 @@ export async function ingestSignal(input: {
   // never hold a pooled DB connection open across an LLM call.
   const textForExtraction = input.extractionText?.trim() || input.rawText;
   const { properties } = await extract(textForExtraction, attachments);
+  const hierarchy = await postProcessProjectBuildingAssignments(properties);
+  try {
+    await commitHierarchyPostProcessCuration(hierarchy.projectCuration);
+  } catch {
+    // Tier 2 hierarchy curation is supporting context; never block primary ingest.
+  }
 
   // Signal insert + observations + status update are atomic.
   return transaction(async (tx) => {
@@ -87,7 +94,7 @@ export async function ingestSignal(input: {
     }
 
     const signalId = inserted[0]!.id;
-    const result = await persistDraft(properties, { rawSignalId: signalId, sourceType: source }, tx);
+    const result = await persistDraft(hierarchy.properties, { rawSignalId: signalId, sourceType: source }, tx);
 
     await tx
       .update(rawSignal)

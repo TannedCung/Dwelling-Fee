@@ -80,7 +80,7 @@ export async function researchProjectInformation(
   return { query: searchQuery, internetQuery: searchQuery, dbMatches, internet, debug };
 }
 
-async function searchExistingEntities(query: string, db: DbExecutor): Promise<DbGroundingMatch[]> {
+export async function searchExistingEntities(query: string, db: DbExecutor): Promise<DbGroundingMatch[]> {
   const searchTokens = uniqueText(tokens(normalizeName(query))).slice(0, 8);
   if (searchTokens.length === 0) return [];
   const projectClauses: SQL[] = [];
