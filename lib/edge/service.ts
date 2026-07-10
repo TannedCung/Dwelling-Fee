@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, transaction, type DbExecutor } from "../../db/client";
 import {
@@ -14,6 +14,7 @@ import { badRequest, unauthorized } from "../api/respond";
 import { ensureEdgeSchema } from "../db/ensure-schema";
 import { ingestSignal } from "../ingest";
 import { distillEdgePost } from "./distill";
+import { expireStaleEdgeLeases } from "./scheduler";
 import {
   EDGE_AUTH_HEADERS,
   deviceSecretHash,
@@ -296,7 +297,7 @@ export async function leaseNextJob(device: AuthenticatedDevice, input: z.infer<t
   const now = new Date();
   const leaseExpiresAt = new Date(now.getTime() + (input.leaseSeconds ?? DEFAULT_LEASE_SECONDS) * 1000);
 
-  await expireStaleLeases(now);
+  await expireStaleEdgeLeases(now);
 
   const leased = await transaction(async (tx) => {
     const candidates = await tx
@@ -616,19 +617,6 @@ async function getActiveJobForDevice(device: AuthenticatedDevice, jobId: string)
     throw unauthorized("crawl job lease expired");
   }
   return job;
-}
-
-async function expireStaleLeases(now: Date): Promise<void> {
-  await getDb()
-    .update(crawlJob)
-    .set({
-      status: "expired",
-      leaseDeviceId: null,
-      leaseExpiresAt: null,
-      updatedAt: now,
-      error: "Lease expired before completion.",
-    })
-    .where(and(inArray(crawlJob.status, ["leased", "running", "needs_user_action"]), lt(crawlJob.leaseExpiresAt, now)));
 }
 
 async function allowedDomainsForSource(sourceId: string): Promise<string[]> {
