@@ -1,4 +1,4 @@
-import { listReviewQueue, type ReviewItem } from "../../lib/review";
+import { listReviewHierarchyOptions, listReviewQueue, type ReviewHierarchyOptions, type ReviewItem } from "../../lib/review";
 import { ReviewActions } from "./review-actions";
 import { Icon } from "../_components/icon";
 import { DatabaseError } from "../_components/notice";
@@ -61,9 +61,10 @@ function Hierarchy({ item }: { item: ReviewItem }) {
 
 export default async function ReviewPage() {
   let items: ReviewItem[] = [];
+  let hierarchyOptions: ReviewHierarchyOptions = { projects: [], buildings: [] };
   let error: string | null = null;
   try {
-    items = await listReviewQueue();
+    [items, hierarchyOptions] = await Promise.all([listReviewQueue(), listReviewHierarchyOptions()]);
   } catch (e) {
     error = describeError(e, "review");
   }
@@ -102,7 +103,12 @@ export default async function ReviewPage() {
                 <SourceLink item={it} />
               </div>
               <Hierarchy item={it} />
-              <ReviewActions observationId={it.observationId} candidates={it.candidates} createSuggestion={it.createSuggestion} />
+              <ReviewActions
+                observationId={it.observationId}
+                candidates={it.candidates}
+                createSuggestion={it.createSuggestion}
+                hierarchyOptions={hierarchyOptions}
+              />
             </div>
           ))}
         </div>

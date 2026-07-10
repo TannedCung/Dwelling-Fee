@@ -200,14 +200,14 @@ button { font-family: inherit; }
 
 /* ---- Inputs ---------------------------------------------------------- */
 .field label { display: block; font: var(--text-caption); color: var(--ink-2); margin-bottom: 6px; }
-textarea.input, input.input {
+textarea.input, input.input, select.input {
   width: 100%; font: var(--text-body-sm); color: var(--ink); font-family: var(--font-sans);
   background: var(--sunken); border: none; border-radius: var(--r-md); padding: 13px 15px;
   box-shadow: var(--ring-inset); outline: none; resize: vertical;
   transition: box-shadow .18s, background .18s;
 }
 textarea.input::placeholder, input.input::placeholder { color: var(--ink-3); }
-textarea.input:focus, input.input:focus { background: var(--surface-2); box-shadow: 0 0 0 2px var(--sage), var(--ring-inset); }
+textarea.input:focus, input.input:focus, select.input:focus { background: var(--surface-2); box-shadow: 0 0 0 2px var(--sage), var(--ring-inset); }
 .form-actions { display: flex; gap: 12px; align-items: center; }
 .form-msg { font: var(--text-body-sm); color: var(--ink-2); }
 .form-msg.ok { color: var(--success); }
@@ -344,6 +344,11 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .review-kv b { font: var(--text-body-sm); color: var(--ink); overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .actions .review-create { white-space: normal; text-align: left; max-width: 100%; }
+.review-editor { width: 100%; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(100px, .45fr); gap: 10px; align-items: end; }
+.review-field { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); gap: 6px; align-items: end; }
+.review-field > span { grid-column: 1 / -1; font: var(--text-caption); color: var(--ink-2); }
+.review-field.compact { grid-template-columns: 1fr; }
+.review-field .input { min-width: 0; border-radius: var(--r-xs); padding: 8px 10px; }
 .raw { font: var(--text-body-sm); color: var(--ink); margin: 0; white-space: pre-wrap; line-height: 1.5; }
 
 /* ---- Property living page -------------------------------------------- */
@@ -584,6 +589,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .chat-log { flex: none; min-height: 340px; max-height: 48vh; }
   .msg { max-width: 94%; }
   .composer .hint { align-items: flex-start; flex-direction: column; }
+  .review-editor, .review-field { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
