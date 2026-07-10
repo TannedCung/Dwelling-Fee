@@ -81,15 +81,9 @@ export function ReviewActions({
   }
 
   return (
-    <div className="actions">
-      {candidates.map((c) => (
-        <button key={c.id} disabled={pending} onClick={() => act({ action: "link", propertyId: c.id })} className="btn ghost sm">
-          <Icon name="link" size={15} />
-          {candidateTitle(c)} <span className="mono" style={{ color: "var(--ink-3)" }}>{(c.score * 100).toFixed(0)}%</span>
-        </button>
-      ))}
-      <div className="review-editor">
-        <label className="review-field">
+    <>
+      <div className="review-hierarchy review-hierarchy-edit">
+        <label className="review-kv">
           <span>Project</span>
           <select
             className="input"
@@ -114,7 +108,7 @@ export function ReviewActions({
             placeholder="Project name"
           />
         </label>
-        <label className="review-field">
+        <label className="review-kv">
           <span>Building</span>
           <select
             className="input"
@@ -145,7 +139,7 @@ export function ReviewActions({
             placeholder="Building name"
           />
         </label>
-        <label className="review-field compact">
+        <label className="review-kv">
           <span>Unit</span>
           <input
             className="input"
@@ -156,23 +150,31 @@ export function ReviewActions({
           />
         </label>
       </div>
-      <button
-        disabled={pending}
-        onClick={() => act({
-          action: "create",
-          projectName: nullableText(projectName),
-          buildingName: nullableText(buildingName),
-          houseNumber: nullableText(houseNumber),
-        })}
-        className="btn secondary sm review-create"
-      >
-        <Icon name="plus" size={15} />
-        Create {createLabel}
-      </button>
-      <button disabled={pending} onClick={() => act({ action: "dismiss" })} className="btn danger sm">
-        <Icon name="x" size={15} />
-        Dismiss
-      </button>
-    </div>
+      <div className="actions">
+        {candidates.map((c) => (
+          <button key={c.id} disabled={pending} onClick={() => act({ action: "link", propertyId: c.id })} className="btn ghost sm">
+            <Icon name="link" size={15} />
+            {candidateTitle(c)} <span className="mono" style={{ color: "var(--ink-3)" }}>{(c.score * 100).toFixed(0)}%</span>
+          </button>
+        ))}
+        <button
+          disabled={pending}
+          onClick={() => act({
+            action: "create",
+            projectName: nullableText(projectName),
+            buildingName: nullableText(buildingName),
+            houseNumber: nullableText(houseNumber),
+          })}
+          className="btn secondary sm review-create"
+        >
+          <Icon name="plus" size={15} />
+          Create {createLabel}
+        </button>
+        <button disabled={pending} onClick={() => act({ action: "dismiss" })} className="btn danger sm">
+          <Icon name="x" size={15} />
+          Dismiss
+        </button>
+      </div>
+    </>
   );
 }

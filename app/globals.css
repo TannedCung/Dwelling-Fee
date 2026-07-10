@@ -342,13 +342,11 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .review-kv { background: var(--sunken); border-radius: var(--r-xs); padding: 7px 9px; display: grid; gap: 2px; min-width: 0; }
 .review-kv span { font: var(--text-caption); color: var(--ink-3); }
 .review-kv b { font: var(--text-body-sm); color: var(--ink); overflow-wrap: anywhere; }
+.review-hierarchy-edit { grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(100px, .45fr); }
+.review-hierarchy-edit .review-kv { gap: 6px; }
+.review-hierarchy-edit .input { min-width: 0; border-radius: var(--r-xs); padding: 8px 10px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .actions .review-create { white-space: normal; text-align: left; max-width: 100%; }
-.review-editor { width: 100%; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(100px, .45fr); gap: 10px; align-items: end; }
-.review-field { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); gap: 6px; align-items: end; }
-.review-field > span { grid-column: 1 / -1; font: var(--text-caption); color: var(--ink-2); }
-.review-field.compact { grid-template-columns: 1fr; }
-.review-field .input { min-width: 0; border-radius: var(--r-xs); padding: 8px 10px; }
 .raw { font: var(--text-body-sm); color: var(--ink); margin: 0; white-space: pre-wrap; line-height: 1.5; }
 
 /* ---- Property living page -------------------------------------------- */
@@ -589,7 +587,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .chat-log { flex: none; min-height: 340px; max-height: 48vh; }
   .msg { max-width: 94%; }
   .composer .hint { align-items: flex-start; flex-direction: column; }
-  .review-editor, .review-field { grid-template-columns: 1fr; }
+  .review-hierarchy-edit { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
