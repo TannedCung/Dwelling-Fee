@@ -107,6 +107,20 @@ Active edge collection uses:
 server-side crawler. They remain in schema for existing deployments but are not
 used by new collection code.
 
+## Scheduled Collection
+
+Vercel cron calls `GET /api/cron/edge-crawl` daily at 18:00 UTC. The route requires
+`Authorization: Bearer $CRON_SECRET`, expires stale leases, and enqueues at most
+one active crawl job per enabled source. It does not fetch source pages itself;
+registered edge devices lease the queued jobs and perform browser collection.
+
+Manual server-side triggering uses the same route and bearer token:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  "https://dwelling-fee.vercel.app/api/cron/edge-crawl?limit=25&priority=0"
+```
+
 ## Source Configuration
 
 Source config is intentionally small and worker-oriented:
