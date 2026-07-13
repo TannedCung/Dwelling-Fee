@@ -342,9 +342,21 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .review-kv { background: var(--sunken); border-radius: var(--r-xs); padding: 7px 9px; display: grid; gap: 2px; min-width: 0; }
 .review-kv span { font: var(--text-caption); color: var(--ink-3); }
 .review-kv b { font: var(--text-body-sm); color: var(--ink); overflow-wrap: anywhere; }
-.review-hierarchy-edit { grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) minmax(100px, .45fr); }
-.review-hierarchy-edit .review-kv { gap: 6px; }
-.review-hierarchy-edit .input { min-width: 0; border-radius: var(--r-xs); padding: 8px 10px; }
+.review-hierarchy-edit { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(92px, .42fr); }
+.review-hierarchy-edit .review-kv { gap: 6px; padding: 9px 10px 10px; }
+.review-combobox { position: relative; min-width: 0; }
+.review-hierarchy-control { min-width: 0; height: 38px; border-radius: var(--r-xs) !important; padding: 8px 34px 8px 10px !important; overflow: hidden; text-overflow: ellipsis; }
+.review-combobox-toggle { position: absolute; top: 0; right: 0; width: 34px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 0 var(--r-xs) var(--r-xs) 0; background: transparent; color: var(--ink-3); cursor: pointer; }
+.review-combobox-toggle:hover { color: var(--cocoa); background: rgba(255,255,255,.35); }
+.review-combobox-toggle:focus-visible { outline: 2px solid var(--sage); outline-offset: -2px; }
+.review-combobox-toggle:disabled { opacity: .45; cursor: not-allowed; }
+.review-combobox-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.review-combobox-list { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: max(100%, 230px); max-width: min(360px, calc(100vw - 48px)); max-height: 240px; overflow-y: auto; padding: 5px; background: var(--surface); border-radius: var(--r-sm); box-shadow: var(--shadow-lg); }
+.review-combobox-list button { width: 100%; min-height: 36px; padding: 8px 9px; display: flex; align-items: center; gap: 7px; border: none; border-radius: var(--r-xs); background: transparent; color: var(--ink); font: var(--text-body-sm); text-align: left; cursor: pointer; }
+.review-combobox-list button:hover, .review-combobox-list button.active { background: var(--sunken); }
+.review-combobox-list button[aria-selected="true"] { color: var(--cocoa-deep); font-weight: 600; }
+.review-combobox-list button span { overflow-wrap: anywhere; }
+.review-combobox-empty { padding: 9px; color: var(--ink-3); font: var(--text-caption); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .actions .review-create { white-space: normal; text-align: left; max-width: 100%; }
 .raw { font: var(--text-body-sm); color: var(--ink); margin: 0; white-space: pre-wrap; line-height: 1.5; }
