@@ -40,7 +40,7 @@ function SourceLink({ item }: { item: ReviewItem }) {
 
 export default async function ReviewPage() {
   let items: ReviewItem[] = [];
-  let hierarchyOptions: ReviewHierarchyOptions = { projects: [], buildings: [] };
+  let hierarchyOptions: ReviewHierarchyOptions = { projects: [], buildings: [], units: [] };
   let error: string | null = null;
   try {
     [items, hierarchyOptions] = await Promise.all([listReviewQueue(), listReviewHierarchyOptions()]);

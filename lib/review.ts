@@ -1,6 +1,6 @@
-import { and, asc, count, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { getDb, transaction, type DbExecutor } from "../db/client";
-import { building, priceObservation, project, rawSignal } from "../db/schema";
+import { building, priceObservation, project, property, rawSignal } from "../db/schema";
 import { PropertyExtraction } from "./extraction/schema";
 import { findCandidates, createPropertyFromExtraction, cleanProjectName, type Candidate } from "./resolution";
 import { normalizeName } from "./text";
@@ -33,6 +33,14 @@ export interface ReviewCreateSuggestion {
 export interface ReviewHierarchyOptions {
   projects: Array<{ id: string; name: string }>;
   buildings: Array<{ id: string; projectId: string; projectName: string; name: string }>;
+  units: Array<{
+    id: string;
+    projectId: string | null;
+    buildingId: string | null;
+    projectName: string | null;
+    buildingName: string | null;
+    houseNumber: string;
+  }>;
 }
 
 /** Cheap count of observations awaiting review — for the nav badge (no candidate lookups). */
@@ -85,7 +93,7 @@ export async function listReviewQueue(limit = 50): Promise<ReviewItem[]> {
 
 export async function listReviewHierarchyOptions(): Promise<ReviewHierarchyOptions> {
   const db = getDb();
-  const [projects, buildings] = await Promise.all([
+  const [projects, buildings, units] = await Promise.all([
     db
       .select({ id: project.id, name: project.name })
       .from(project)
@@ -104,8 +112,27 @@ export async function listReviewHierarchyOptions(): Promise<ReviewHierarchyOptio
       .where(isNull(building.canonicalBuildingId))
       .orderBy(asc(project.name), asc(building.name))
       .limit(400),
+    db
+      .select({
+        id: property.id,
+        projectId: property.projectId,
+        buildingId: property.buildingId,
+        projectName: project.name,
+        buildingName: building.name,
+        houseNumber: property.houseNumber,
+      })
+      .from(property)
+      .leftJoin(project, eq(property.projectId, project.id))
+      .leftJoin(building, eq(property.buildingId, building.id))
+      .where(and(isNull(property.canonicalPropertyId), isNotNull(property.houseNumber)))
+      .orderBy(asc(project.name), asc(building.name), asc(property.houseNumber))
+      .limit(800),
   ]);
-  return { projects, buildings };
+  return {
+    projects,
+    buildings,
+    units: units.filter((unit): unit is typeof unit & { houseNumber: string } => Boolean(unit.houseNumber)),
+  };
 }
 
 export type ReviewAction =
