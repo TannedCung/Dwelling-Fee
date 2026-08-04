@@ -17,6 +17,7 @@ import { adkProjectInformationResearchTool } from "../ai/mcp-tools";
 import { ProjectCurationDraftSchema, type ProjectCurationDraft } from "./project-curation";
 import { draftTurnAdkSchema } from "../ai/adk-schema";
 import { researchProjectInformation } from "./research";
+import { HOUSING_EXTRACTION_SKILL } from "../extraction/skill";
 
 /**
  * One conversational ingest turn. The model receives the running transcript plus
@@ -42,17 +43,9 @@ const DraftTurn = z.object({
 
 const SYSTEM = `You are an ingest assistant for a housing price intelligence database. You help a human turn messy broker messages and listings into clean, structured property records through a short conversation.
 
-You maintain a DRAFT: a list of properties. Each turn, read the new user message together with the current draft, then update the draft and reply.
+${HOUSING_EXTRACTION_SKILL}
 
-Decode Vietnamese real-estate shorthand (text may mix VI/EN):
-- Price units: "tỷ"/"tỉ" = 1,000,000,000 VND; "triệu"/"tr" = 1,000,000 VND. "4.5 tỷ" -> 4500000000.
-- Approximate masked prices like "3.6x tỷ" or "3,6x tỉ" mean a low-precision total price near that amount; store the known lower-bound figure (e.g. 3600000000), lower confidence, and do not ask for exact digits unless the user needs exact pricing.
-- "TL"/"thương lượng"/"thỏa thuận" -> negotiable. "PN"/"phòng ngủ" -> bedrooms. "m2"/"m²" -> areaM2.
-- "sổ hồng"/"SHR"/"sổ đỏ" -> has title (a note; doesn't change price). "cho thuê" -> rent; "bán"/"cần bán" -> sale.
-- If the text says "cần bán", "giá bán", "bán", or quotes a multi-billion VND price for an apartment, infer listingType="sale" unless rent is explicitly stated. Do not ask sale-vs-rent for implausible rent amounts such as 3.6 tỷ for a 58m² apartment.
-- "đã bán"/"chốt"/"sold" -> transacted; an active listing -> asking.
-- A price written "/m2" means priceBasis="per_m2"; otherwise "total".
-- If images are attached, read visible listing text/screenshots from those images and merge it with the typed message.
+You maintain a DRAFT: a list of properties. Each turn, read the new user message together with the current draft, then update the draft and reply.
 
 GOAL — gather enough to commit. A property is COMPLETE only when it has ALL of:
   1. price (priceVnd)
@@ -106,6 +99,8 @@ class IngestAgentOutputError extends Error {
   }
 }
 
+import { buildSkillPromptInstructions } from "../skills";
+
 /**
  * Shared turn setup: validate the session, persist the user message (so it's never
  * lost if the model call fails), and assemble the prompt. Used by both the one-shot
@@ -132,8 +127,9 @@ async function prepareTurn(sessionId: string, userContent: string, attachments: 
   ];
 
   const outstanding = incompleteSummary(before.draft);
+  const skillInstructions = await buildSkillPromptInstructions({ text: userContent, taskType: "ingest" });
   const system =
-    `${SYSTEM}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
+    `${SYSTEM}\n\n${skillInstructions}\n\nCURRENT DRAFT (JSON):\n${JSON.stringify(before.draft)}` +
     `\n\nCURRENT PROJECT CURATION DRAFT (JSON):\n${JSON.stringify(before.projectCuration)}` +
     (outstanding.length ? `\n\nSTILL MISSING (ask for these):\n${outstanding.join("\n")}` : "");
   const prompt = await adkPrompt(turns);

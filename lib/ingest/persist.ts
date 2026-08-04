@@ -3,7 +3,7 @@ import { priceObservation } from "../../db/schema";
 import { resolve, createPropertyFromExtraction, hasGroundedHierarchy } from "../resolution";
 import type { PropertyExtraction } from "../extraction/schema";
 import { EXTRACTOR_VERSION } from "../extraction/extract";
-import { hasIdentity } from "../extraction/completeness";
+import { hasIdentity, isUsableObservation } from "../extraction/completeness";
 
 // Observations below this extractor confidence are quarantined for human review
 // and excluded from analytics until confirmed (design §2, §7).
@@ -20,6 +20,7 @@ export interface PersistResult {
   autoLinked: number;
   created: number;
   needsReview: number;
+  rejected: number;
 }
 
 /**
@@ -27,18 +28,23 @@ export interface PersistResult {
  * carrying provenance (raw signal + ingest session). Shared by both the
  * conversational commit (lib/ingest/commit) and the one-shot ingest (lib/ingest).
  *
- * Each property is auto-linked to an existing property, used to create a new one,
- * or — if low-confidence or an ambiguous match — quarantined to the review queue.
+ * Each property is evaluated against quality thresholds; poor-information candidates
+ * are rejected. Usable candidates are auto-linked, used to create a new property, or quarantined.
  */
 export async function persistDraft(
   properties: PropertyExtraction[],
   ctx: PersistContext,
   db: DbExecutor = getDb(),
 ): Promise<PersistResult> {
-  let autoLinked = 0, created = 0, needsReview = 0;
+  let autoLinked = 0, created = 0, needsReview = 0, rejected = 0;
   const rows = [];
 
   for (const p of properties) {
+    if (!isUsableObservation(p)) {
+      rejected++;
+      continue;
+    }
+
     let propertyId: string | null = null;
     let review = shouldReviewExtraction(p);
 
@@ -74,7 +80,7 @@ export async function persistDraft(
   }
 
   if (rows.length > 0) await db.insert(priceObservation).values(rows);
-  return { observationsCreated: properties.length, autoLinked, created, needsReview };
+  return { observationsCreated: rows.length, autoLinked, created, needsReview, rejected };
 }
 
 export function shouldReviewExtraction(p: PropertyExtraction): boolean {
