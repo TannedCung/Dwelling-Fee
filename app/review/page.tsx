@@ -38,30 +38,9 @@ function SourceLink({ item }: { item: ReviewItem }) {
   );
 }
 
-function Hierarchy({ item }: { item: ReviewItem }) {
-  return (
-    <div className="review-hierarchy">
-      <span className="review-kv">
-        <span>Project</span>
-        <b>{item.createSuggestion.projectName ?? "—"}</b>
-      </span>
-      <span className="review-kv">
-        <span>Building</span>
-        <b>{item.createSuggestion.buildingName ?? "—"}</b>
-      </span>
-      {item.createSuggestion.houseNumber && (
-        <span className="review-kv">
-          <span>Unit</span>
-          <b>{item.createSuggestion.houseNumber}</b>
-        </span>
-      )}
-    </div>
-  );
-}
-
 export default async function ReviewPage() {
   let items: ReviewItem[] = [];
-  let hierarchyOptions: ReviewHierarchyOptions = { projects: [], buildings: [] };
+  let hierarchyOptions: ReviewHierarchyOptions = { projects: [], buildings: [], units: [] };
   let error: string | null = null;
   try {
     [items, hierarchyOptions] = await Promise.all([listReviewQueue(), listReviewHierarchyOptions()]);
@@ -102,7 +81,6 @@ export default async function ReviewPage() {
                 {it.confidence != null && <ConfidenceBadge value={it.confidence} />}
                 <SourceLink item={it} />
               </div>
-              <Hierarchy item={it} />
               <ReviewActions
                 observationId={it.observationId}
                 candidates={it.candidates}

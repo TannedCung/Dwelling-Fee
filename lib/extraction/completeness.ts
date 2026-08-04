@@ -60,3 +60,35 @@ export function identityLabel(p: PropertyExtraction): string {
   const parts = [p.projectName, p.buildingName, p.houseNumber].filter(Boolean);
   return parts.length > 0 ? parts.join(" / ") : p.name ?? p.locationText ?? "(unnamed)";
 }
+
+export const MIN_USABLE_CONFIDENCE = 0.40;
+
+/**
+ * Quality gate to reject observations that lack enough information to be useful.
+ *
+ * An observation is dropped (rejected) if it has low confidence, lacks identity/location,
+ * has an unknown listing type, or lacks price information.
+ */
+export function rejectionReason(p: PropertyExtraction): string | null {
+  if (p.confidence < MIN_USABLE_CONFIDENCE) {
+    return `confidence too low (${p.confidence.toFixed(2)} < ${MIN_USABLE_CONFIDENCE})`;
+  }
+  if (!hasIdentity(p)) {
+    return "lacks identity or location";
+  }
+  if (p.listingType === "unknown") {
+    return "unknown listing type (neither sale nor rent)";
+  }
+  if (p.priceVnd == null && p.areaM2 == null) {
+    return "lacks both price and area";
+  }
+  if (p.priceVnd == null && p.listingType === "sale") {
+    return "sale listing lacks price";
+  }
+  return null;
+}
+
+export function isUsableObservation(p: PropertyExtraction): boolean {
+  return rejectionReason(p) === null;
+}
+

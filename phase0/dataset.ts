@@ -91,4 +91,39 @@ export const DATASET: Case[] = [
     text: "Chào buổi sáng cả nhà, chúc mọi người một ngày làm việc hiệu quả nhé! 🌞",
     expected: [],
   },
+  {
+    id: "buying-request-1",
+    text: "Cần mua gấp căn hộ 2PN Vinhomes Grand Park Q9 tài chính 3.5 tỷ đổ lại. Sổ hồng sang tên ngay. Inbox em!",
+    expected: [],
+  },
+  {
+    id: "buying-request-2",
+    text: "Khách em tìm thuê căn 1PN Masteri An Phú full nội thất tài chính 14tr/tháng. Chính chủ nhắn em nhé.",
+    expected: [],
+  },
+  {
+    id: "broker-recruitment",
+    text: "Tuyển dụng 5 nhân viên kinh doanh bất động sản khu vực Quận 2, hoa hồng hấp dẫn 60%, hỗ trợ data hot.",
+    expected: [],
+  },
+  {
+    id: "vague-project-promo",
+    text: "Siêu siêu phẩm căn hộ cao cấp chuẩn Nhật Bản trung tâm Q7. Liên hệ hotline 0909xxxxxx để chọn căn đẹp!",
+    expected: [],
+  },
+  {
+    id: "masked-price",
+    text: "Bán căn 2PN Ecopark Park Premium 58m2 giá 3.6x tỷ, view nội khu mát mẻ.",
+    expected: [
+      { type: "apartment", listingType: "sale", priceVnd: 3_600_000_000, priceBasis: "total", areaM2: 58, bedrooms: 2, isNegotiable: false, dealStatus: "asking", locationContains: "Ecopark" },
+    ],
+  },
+  {
+    id: "shophouse-sale",
+    text: "Bán shophouse khối đế Masteri Thảo Điền 120m2 giá 18.5 tỷ, đang có hợp đồng thuê sẵn.",
+    expected: [
+      { type: "apartment", listingType: "sale", priceVnd: 18_500_000_000, priceBasis: "total", areaM2: 120, bedrooms: null, isNegotiable: false, dealStatus: "asking", locationContains: "Masteri" },
+    ],
+  },
 ];
+
