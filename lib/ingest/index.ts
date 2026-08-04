@@ -19,6 +19,7 @@ export interface IngestResult {
   autoLinked: number;
   created: number;
   needsReview: number;
+  rejected: number;
 }
 
 /**
@@ -39,7 +40,7 @@ export async function ingestSignal(input: {
   const attachments = input.attachments ?? [];
   const hashText = [input.rawText.trim(), ...attachments.map((a) => `${a.key}:${a.url}`)].join("\n");
   const contentHash = createHash("sha256").update(hashText).digest("hex");
-  const empty = { duplicate: true as const, observationsCreated: 0, autoLinked: 0, created: 0, needsReview: 0 };
+  const empty = { duplicate: true as const, observationsCreated: 0, autoLinked: 0, created: 0, needsReview: 0, rejected: 0 };
 
   // Cheap dedup check first — also avoids paying for extraction on a known signal.
   const existing = await getDb().query.rawSignal.findFirst({
@@ -98,7 +99,14 @@ export async function ingestSignal(input: {
 
     await tx
       .update(rawSignal)
-      .set({ status: result.needsReview > 0 ? "needs_review" : "extracted" })
+      .set({
+        status:
+          result.observationsCreated === 0
+            ? "ignored"
+            : result.needsReview > 0
+              ? "needs_review"
+              : "extracted",
+      })
       .where(eq(rawSignal.id, signalId));
 
     return { rawSignalId: signalId, duplicate: false, ...result };
