@@ -1,6 +1,5 @@
 services:
   edge-worker:
-    image: dwelling-fee-edge:latest
     build:
       context: .
       dockerfile: Dockerfile.edge
@@ -17,11 +16,6 @@ services:
     environment:
       - EDGE_CHROMIUM_SANDBOX=false
       - EDGE_HEADLESS=false
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
 
 volumes:
   edge_profile_data:

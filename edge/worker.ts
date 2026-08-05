@@ -159,7 +159,7 @@ async function main() {
   const context = await launchEdgeBrowserContext({
     profileDir: config.profileDir,
     headless: config.headless,
-    channel: "chrome",
+    channel: process.env.EDGE_BROWSER_CHANNEL || undefined,
     chromiumSandbox: config.chromiumSandbox,
   });
 
