@@ -1,8 +1,12 @@
 # Production Docker container image for Edge Device Worker + noVNC Appliance
 FROM mcr.microsoft.com/playwright:v1.49.0-noble
 
-# Install Xvfb, x11vnc, noVNC, websockify, supervisord, and base utilities
-RUN apt-get update && apt-get install -y \
+# Install Google Chrome stable, Xvfb, x11vnc, noVNC, websockify, supervisord, and base utilities
+RUN apt-get update && apt-get install -y wget gnupg \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update && apt-get install -y \
+    google-chrome-stable \
     xvfb \
     x11vnc \
     novnc \
@@ -11,14 +15,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink so Playwright channel "chrome" resolves to bundled Chromium
-RUN mkdir -p /opt/google/chrome && ln -sf /ms-playwright/chromium-1148/chrome-linux/chrome /opt/google/chrome/chrome
-
 WORKDIR /app
 
 # Copy dependency manifests and install packages
 COPY package*.json ./
-RUN npm ci
+RUN npm ci && npx playwright install chromium
 
 # Copy application source code
 COPY . .
@@ -34,7 +35,6 @@ ENV EDGE_PROFILE_DIR=/app/.edge-profile/default
 ENV EDGE_BIND_HOST=0.0.0.0
 ENV EDGE_VNC_PORT=5900
 ENV EDGE_NOVNC_PORT=6080
-ENV EDGE_EXECUTABLE_PATH=/ms-playwright/chromium-1148/chrome-linux/chrome
 
 EXPOSE 6080
 

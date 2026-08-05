@@ -159,7 +159,7 @@ async function main() {
   const context = await launchEdgeBrowserContext({
     profileDir: config.profileDir,
     headless: config.headless,
-    channel: process.env.EDGE_BROWSER_CHANNEL || "chromium",
+    channel: process.env.EDGE_BROWSER_CHANNEL || undefined,
     chromiumSandbox: config.chromiumSandbox,
   });
 
@@ -203,18 +203,10 @@ export async function launchEdgeBrowserContext(options: {
       "--no-sandbox",
     ],
   };
-  const execPath = process.env.EDGE_EXECUTABLE_PATH || "/ms-playwright/chromium-1148/chrome-linux/chrome";
-  try {
-    const st = await import("node:fs/promises").then((m) => m.stat(execPath));
-    if (st.isFile()) {
-      launchOptions.executablePath = execPath;
-    } else if (options.channel && options.channel !== "chromium") {
-      launchOptions.channel = options.channel;
-    }
-  } catch {
-    if (options.channel && options.channel !== "chromium") {
-      launchOptions.channel = options.channel;
-    }
+  if (process.env.EDGE_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.EDGE_EXECUTABLE_PATH;
+  } else if (options.channel && options.channel !== "chromium") {
+    launchOptions.channel = options.channel;
   }
   return chromium.launchPersistentContext(options.profileDir, launchOptions);
 }
