@@ -26,7 +26,7 @@ import {
 } from "./protocol";
 
 const MAX_BODY_BYTES = 1_500_000;
-const CLOCK_SKEW_MS = 15 * 60 * 1000;
+const CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LEASE_SECONDS = 120;
 const HEARTBEAT_LEASE_EXTENSION_SECONDS = 300;
 
@@ -233,7 +233,7 @@ export async function authenticateEdgeRequest<T>(
 
   const ts = Number(timestamp);
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > CLOCK_SKEW_MS) {
-    throw unauthorized("stale edge request");
+    throw unauthorized(`stale edge request: server time ${Date.now()} vs request time ${ts} (drift ${Math.abs(Date.now() - ts)}ms > max ${CLOCK_SKEW_MS}ms)`);
   }
 
   const db = getDb();
