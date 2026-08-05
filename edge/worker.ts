@@ -196,6 +196,12 @@ export async function launchEdgeBrowserContext(options: {
     headless: options.headless,
     chromiumSandbox: options.chromiumSandbox ?? true,
     viewport: options.headless ? undefined : null,
+    args: [
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--disable-software-rasterizer",
+      "--no-sandbox",
+    ],
   };
   if (process.env.EDGE_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.EDGE_EXECUTABLE_PATH;
