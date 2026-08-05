@@ -16,6 +16,7 @@ WORKDIR /app
 # Copy dependency manifests and install packages
 COPY package*.json ./
 RUN npm ci
+RUN npx playwright install chrome
 
 # Copy application source code
 COPY . .

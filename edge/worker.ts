@@ -159,7 +159,7 @@ async function main() {
   const context = await launchEdgeBrowserContext({
     profileDir: config.profileDir,
     headless: config.headless,
-    channel: process.env.EDGE_BROWSER_CHANNEL || undefined,
+    channel: process.env.EDGE_BROWSER_CHANNEL || "chromium",
     chromiumSandbox: config.chromiumSandbox,
   });
 
@@ -192,14 +192,15 @@ export async function launchEdgeBrowserContext(options: {
   chromiumSandbox?: boolean;
 }): Promise<BrowserContext> {
   await mkdir(options.profileDir, { recursive: true });
-  return chromium.launchPersistentContext(options.profileDir, {
-    channel: options.channel,
+  const launchOptions: Parameters<typeof chromium.launchPersistentContext>[1] = {
     headless: options.headless,
     chromiumSandbox: options.chromiumSandbox ?? true,
-    // Keep the host window dimensions in headful mode; use Playwright's stable
-    // default viewport in headless/test mode where there is no host window.
     viewport: options.headless ? undefined : null,
-  });
+  };
+  if (options.channel) {
+    launchOptions.channel = options.channel;
+  }
+  return chromium.launchPersistentContext(options.profileDir, launchOptions);
 }
 
 async function runJob(config: WorkerConfig, context: BrowserContext, job: NonNullable<JobResponse["job"]>) {
