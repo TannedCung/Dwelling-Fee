@@ -84,6 +84,7 @@ Useful overrides:
 
 ```bash
 EDGE_TAILSCALE_IP=100.x.y.z
+EDGE_BIND_HOST=0.0.0.0
 EDGE_NOVNC_PORT=6080
 EDGE_VNC_PORT=5900
 EDGE_DISPLAY=:99
@@ -91,6 +92,23 @@ EDGE_SOLVE_TIMEOUT_MS=900000
 EDGE_CHROMIUM_SANDBOX=true
 EDGE_REMOTE_BROWSER_URL=http://100.x.y.z:6080/vnc.html?autoconnect=1
 ```
+
+## Run As A Docker Appliance
+
+Containerize edge devices for horizontal deployment across edge nodes:
+
+```bash
+# Build the Docker edge appliance image
+docker build -t dwelling-fee-edge -f Dockerfile.edge .
+
+# Run with Docker Compose
+EDGE_DEVICE_ID=... EDGE_DEVICE_SECRET=df_edge_... docker compose -f docker-compose.edge.yml up -d
+```
+
+Notes for containerized deployment:
+- Allocates `shm_size: '2gb'` to prevent Chromium renderer crashes in Docker.
+- Profile data is saved in a named Docker volume (`edge_profile_data`) so cookies and Cloudflare clearance persist across container restarts.
+- Single-use session tokens and authenticated reverse proxy tunnels protect noVNC sessions.
 
 ## Security Model
 

@@ -16,19 +16,20 @@ need() {
   fi
 }
 
-need tailscale
 need Xvfb
 need x11vnc
 need websockify
-need google-chrome
 
-if [[ -z "$TS_IP" ]]; then
-  TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+BIND_IP="${EDGE_BIND_HOST:-${EDGE_TAILSCALE_IP:-}}"
+if [[ -z "$BIND_IP" ]]; then
+  if command -v tailscale >/dev/null 2>&1; then
+    BIND_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+  fi
 fi
-if [[ -z "$TS_IP" ]]; then
-  echo "Could not determine Tailscale IP. Set EDGE_TAILSCALE_IP=100.x.y.z." >&2
-  exit 1
+if [[ -z "$BIND_IP" ]]; then
+  BIND_IP="0.0.0.0"
 fi
+
 
 NOVNC_WEB="${EDGE_NOVNC_WEB:-}"
 if [[ -z "$NOVNC_WEB" ]]; then
@@ -73,8 +74,8 @@ x11vnc -display "$DISPLAY_ID" -localhost -rfbport "$VNC_PORT" -forever -shared -
 PIDS+=("$!")
 sleep 1
 
-echo "Starting noVNC on $TS_IP:$NOVNC_PORT"
-websockify --web "$NOVNC_WEB" "$TS_IP:$NOVNC_PORT" "127.0.0.1:$VNC_PORT" &
+echo "Starting noVNC on $BIND_IP:$NOVNC_PORT"
+websockify --web "$NOVNC_WEB" "$BIND_IP:$NOVNC_PORT" "127.0.0.1:$VNC_PORT" &
 PIDS+=("$!")
 sleep 1
 
@@ -82,7 +83,7 @@ export DISPLAY="$DISPLAY_ID"
 export EDGE_HEADLESS=false
 export EDGE_PROFILE_DIR="$PROFILE_DIR"
 export EDGE_SOLVE_TIMEOUT_MS="$SOLVE_TIMEOUT_MS"
-export EDGE_REMOTE_BROWSER_URL="${EDGE_REMOTE_BROWSER_URL:-http://$TS_IP:$NOVNC_PORT/vnc.html?autoconnect=1&resize=remote}"
+export EDGE_REMOTE_BROWSER_URL="${EDGE_REMOTE_BROWSER_URL:-http://$BIND_IP:$NOVNC_PORT/vnc.html?autoconnect=1&resize=remote}"
 
 echo "Remote browser URL: $EDGE_REMOTE_BROWSER_URL"
 echo "Starting edge worker"
