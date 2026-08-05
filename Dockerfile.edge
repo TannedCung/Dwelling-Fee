@@ -1,7 +1,7 @@
 # Production Docker container image for Edge Device Worker + noVNC Appliance
 FROM mcr.microsoft.com/playwright:v1.49.0-noble
 
-# Install Xvfb, x11vnc, noVNC, websockify, supervisord, and base utilities
+# Install Xvfb, x11vnc, noVNC, websockify, supervisord, google-chrome-stable, and base utilities
 RUN apt-get update && apt-get install -y \
     xvfb \
     x11vnc \
@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y \
     websockify \
     supervisor \
     curl \
+    gnupg \
+    && curl -sSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
+    && apt-get install -y /tmp/chrome.deb \
+    && rm /tmp/chrome.deb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

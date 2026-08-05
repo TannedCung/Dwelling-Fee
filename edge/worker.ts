@@ -197,7 +197,9 @@ export async function launchEdgeBrowserContext(options: {
     chromiumSandbox: options.chromiumSandbox ?? true,
     viewport: options.headless ? undefined : null,
   };
-  if (options.channel) {
+  if (process.env.EDGE_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.EDGE_EXECUTABLE_PATH;
+  } else if (options.channel) {
     launchOptions.channel = options.channel;
   }
   return chromium.launchPersistentContext(options.profileDir, launchOptions);
