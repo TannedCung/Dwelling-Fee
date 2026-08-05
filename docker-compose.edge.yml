@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  edge-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    container_name: df_edge_worker_01
+    restart: unless-stopped
+    shm_size: '2gb' # Critical: allocates 2GB shared memory for Chromium to prevent crashes
+    ports:
+      - "6080:6080" # noVNC HTML5 web port
+    volumes:
+      - edge_profile_data:/app/.edge-profile
+      - edge_logs_data:/app/.edge-logs
+    environment:
+      - EDGE_SERVER_URL=${EDGE_SERVER_URL:-https://dwelling-fee.vercel.app}
+      - EDGE_DEVICE_ID=${EDGE_DEVICE_ID}
+      - EDGE_DEVICE_SECRET=${EDGE_DEVICE_SECRET}
+      - EDGE_CHROMIUM_SANDBOX=false
+      - EDGE_HEADLESS=false
+      - EDGE_SOLVE_TIMEOUT_MS=900000
+
+volumes:
+  edge_profile_data:
+    driver: local
+  edge_logs_data:
+    driver: local
