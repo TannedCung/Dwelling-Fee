@@ -26,7 +26,7 @@ import {
 } from "./protocol";
 
 const MAX_BODY_BYTES = 1_500_000;
-const CLOCK_SKEW_MS = 5 * 60 * 1000;
+const CLOCK_SKEW_MS = 15 * 60 * 1000;
 const DEFAULT_LEASE_SECONDS = 120;
 const HEARTBEAT_LEASE_EXTENSION_SECONDS = 300;
 
